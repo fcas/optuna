@@ -11,7 +11,7 @@ In this section, let's try simple examples running on a local environment with S
 
 .. note::
     You can also utilize other RDB backends, e.g., PostgreSQL or MySQL, by setting the storage argument to the DB's URL.
-    Please refer to `SQLAlchemy's document <https://docs.sqlalchemy.org/en/latest/core/engines.html#database-urls>`_ for how to set up the URL.
+    Please refer to `SQLAlchemy's document <https://docs.sqlalchemy.org/en/latest/core/engines.html#database-urls>`__ for how to set up the URL.
 
 
 New Study
@@ -29,7 +29,7 @@ import optuna
 # Add stream handler of stdout to show the messages
 optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
 study_name = "example-study"  # Unique identifier of the study.
-storage_name = "sqlite:///{}.db".format(study_name)
+storage_name = f"sqlite:///{study_name}.db"
 study = optuna.create_study(study_name=study_name, storage=storage_name)
 
 ###################################################################################################
@@ -76,6 +76,12 @@ study.optimize(objective, n_trials=3)
 ###################################################################################################
 # Experimental History
 # --------------------
+#
+# Note that this section requires the installation of `Pandas <https://pandas.pydata.org/>`__:
+#
+# .. code-block:: bash
+#
+#     $ pip install pandas
 #
 # We can access histories of studies and trials via the :class:`~optuna.study.Study` class.
 # For example, we can get all trials of ``example-study`` as:

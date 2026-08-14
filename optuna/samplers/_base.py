@@ -2,22 +2,32 @@ from __future__ import annotations
 
 import abc
 from typing import Any
-from typing import Callable
-from typing import Dict
-from typing import Optional
-from typing import Sequence
 from typing import TYPE_CHECKING
-import warnings
 
 import numpy as np
 
-from optuna.distributions import BaseDistribution
-from optuna.trial import FrozenTrial
+from optuna._warnings import optuna_warn
+from optuna.study._constrained_optimization import _CONSTRAINTS_KEY
 from optuna.trial import TrialState
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from collections.abc import Sequence
+
+    from optuna.distributions import BaseDistribution
     from optuna.study import Study
+    from optuna.trial import FrozenTrial
+
+
+_INDEPENDENT_SAMPLING_WARNING_TEMPLATE = (
+    "The parameter `{param_name}` in Trial#{trial_number} is sampled independently "
+    "using `{independent_sampler_name}` instead of `{sampler_name}`, potentially "
+    "degrading the optimization performance. This fallback happened because "
+    "{fallback_reason}. You can suppress this warning by setting "
+    "`warn_independent_sampling` to `False` in the constructor of `{sampler_name}` if "
+    "this independent sampling is intended behavior."
+)
 
 
 class BaseSampler(abc.ABC):
@@ -59,7 +69,7 @@ class BaseSampler(abc.ABC):
     @abc.abstractmethod
     def infer_relative_search_space(
         self, study: Study, trial: FrozenTrial
-    ) -> Dict[str, BaseDistribution]:
+    ) -> dict[str, BaseDistribution]:
         """Infer the search space that will be used by relative sampling in the target trial.
 
         This method is called right before :func:`~optuna.samplers.BaseSampler.sample_relative`
@@ -86,8 +96,8 @@ class BaseSampler(abc.ABC):
 
     @abc.abstractmethod
     def sample_relative(
-        self, study: Study, trial: FrozenTrial, search_space: Dict[str, BaseDistribution]
-    ) -> Dict[str, Any]:
+        self, study: Study, trial: FrozenTrial, search_space: dict[str, BaseDistribution]
+    ) -> dict[str, Any]:
         """Sample parameters in a given search space.
 
         This method is called once at the beginning of each trial, i.e., right before the
@@ -95,7 +105,7 @@ class BaseSampler(abc.ABC):
         that use relationship between parameters such as Gaussian Process and CMA-ES.
 
         .. note::
-                The failed trials are ignored by any build-in samplers when they sample new
+                The failed trials are ignored by any built-in samplers when they sample new
                 parameters. Thus, failed trials are regarded as deleted in the samplers'
                 perspective.
 
@@ -132,7 +142,7 @@ class BaseSampler(abc.ABC):
         sampling and TPE.
 
         .. note::
-                The failed trials are ignored by any build-in samplers when they sample new
+                The failed trials are ignored by any built-in samplers when they sample new
                 parameters. Thus, failed trials are regarded as deleted in the samplers'
                 perspective.
 
@@ -181,7 +191,7 @@ class BaseSampler(abc.ABC):
         study: Study,
         trial: FrozenTrial,
         state: TrialState,
-        values: Optional[Sequence[float]],
+        values: Sequence[float] | None,
     ) -> None:
         """Trial post-processing.
 
@@ -227,9 +237,6 @@ class BaseSampler(abc.ABC):
             )
 
 
-_CONSTRAINTS_KEY = "constraints"
-
-
 def _process_constraints_after_trial(
     constraints_func: Callable[[FrozenTrial], Sequence[float]],
     study: Study,
@@ -245,7 +252,7 @@ def _process_constraints_after_trial(
         if np.any(np.isnan(con)):
             raise ValueError("Constraint values cannot be NaN.")
         if not isinstance(con, (tuple, list)):
-            warnings.warn(
+            optuna_warn(
                 f"Constraints should be a sequence of floats but got {type(con).__name__}."
             )
         constraints = tuple(con)

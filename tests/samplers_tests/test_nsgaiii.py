@@ -11,10 +11,11 @@ import pytest
 
 import optuna
 from optuna.samplers import BaseSampler
-from optuna.samplers._base import _CONSTRAINTS_KEY
 from optuna.samplers._nsgaiii._elite_population_selection_strategy import (
     _associate_individuals_with_reference_points,
 )
+from optuna.samplers._nsgaiii._elite_population_selection_strategy import _COEF
+from optuna.samplers._nsgaiii._elite_population_selection_strategy import _filter_inf
 from optuna.samplers._nsgaiii._elite_population_selection_strategy import (
     _generate_default_reference_point,
 )
@@ -24,9 +25,6 @@ from optuna.samplers._nsgaiii._elite_population_selection_strategy import (
 from optuna.samplers._nsgaiii._elite_population_selection_strategy import (
     _preserve_niche_individuals,
 )
-from optuna.samplers._nsgaiii._elite_population_selection_strategy import _COEF
-from optuna.samplers._nsgaiii._elite_population_selection_strategy import _filter_inf
-from optuna.samplers._nsgaiii._sampler import _POPULATION_CACHE_KEY_PREFIX
 from optuna.samplers._nsgaiii._sampler import NSGAIIISampler
 from optuna.samplers.nsgaii import BaseCrossover
 from optuna.samplers.nsgaii import BLXAlphaCrossover
@@ -40,6 +38,10 @@ from optuna.trial import create_trial
 from optuna.trial import FrozenTrial
 
 
+def test_generation_key_name() -> None:
+    assert NSGAIIISampler._GENERATION_KEY == "NSGAIIISampler:generation"
+
+
 def test_population_size() -> None:
     # Set `population_size` to 10.
     sampler = NSGAIIISampler(population_size=10)
@@ -48,7 +50,7 @@ def test_population_size() -> None:
     study.optimize(lambda t: [t.suggest_float("x", 0, 9)], n_trials=40)
 
     generations = Counter(
-        [t.system_attrs[optuna.samplers._nsgaiii._sampler._GENERATION_KEY] for t in study.trials]
+        [t.system_attrs[optuna.samplers.NSGAIIISampler._GENERATION_KEY] for t in study.trials]
     )
     assert generations == {0: 10, 1: 10, 2: 10, 3: 10}
 
@@ -59,7 +61,7 @@ def test_population_size() -> None:
     study.optimize(lambda t: [t.suggest_float("x", 0, 9)], n_trials=40)
 
     generations = Counter(
-        [t.system_attrs[optuna.samplers._nsgaiii._sampler._GENERATION_KEY] for t in study.trials]
+        [t.system_attrs[optuna.samplers.NSGAIIISampler._GENERATION_KEY] for t in study.trials]
     )
     assert generations == {i: 2 for i in range(20)}
 
@@ -125,7 +127,7 @@ def test_constraints_func_none() -> None:
 
     assert len(study.trials) == n_trials
     for trial in study.trials:
-        assert _CONSTRAINTS_KEY not in trial.system_attrs
+        assert len(trial.constraints) == 0
 
 
 @pytest.mark.parametrize("constraint_value", [-1.0, 0.0, 1.0, -float("inf"), float("inf")])
@@ -142,6 +144,7 @@ def test_constraints_func(constraint_value: float) -> None:
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", optuna.exceptions.ExperimentalWarning)
+        warnings.simplefilter("ignore", FutureWarning)
         sampler = NSGAIIISampler(population_size=2, constraints_func=constraints_func)
 
     study = optuna.create_study(directions=["minimize"] * n_objectives, sampler=sampler)
@@ -153,7 +156,7 @@ def test_constraints_func(constraint_value: float) -> None:
     assert len(study.trials) == n_trials
     assert constraints_func_call_count == n_trials
     for trial in study.trials:
-        for x, y in zip(trial.system_attrs[_CONSTRAINTS_KEY], (constraint_value + trial.number,)):
+        for x, y in zip(trial.constraints.values(), (constraint_value + trial.number,)):
             assert x == y
 
 
@@ -166,6 +169,7 @@ def test_constraints_func_nan() -> None:
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", optuna.exceptions.ExperimentalWarning)
+        warnings.simplefilter("ignore", FutureWarning)
         sampler = NSGAIIISampler(population_size=2, constraints_func=constraints_func)
 
     study = optuna.create_study(directions=["minimize"] * n_objectives, sampler=sampler)
@@ -179,40 +183,11 @@ def test_constraints_func_nan() -> None:
     assert len(trials) == 1  # The error stops optimization, but completed trials are recorded.
     assert all(0 <= x <= 1 for x in trials[0].params.values())  # The params are normal.
     assert trials[0].values == list(trials[0].params.values())  # The values are normal.
-    assert trials[0].system_attrs[_CONSTRAINTS_KEY] is None  # None is set for constraints.
+    assert len(trials[0].constraints) == 0  # No constraints are set.
 
 
-def test_study_system_attr_for_population_cache() -> None:
-    sampler = NSGAIIISampler(population_size=10)
-    study = optuna.create_study(directions=["minimize"], sampler=sampler)
-
-    def get_cached_entries(
-        study: optuna.study.Study,
-    ) -> list[tuple[int, list[int]]]:
-        study_system_attrs = study._storage.get_study_system_attrs(study._study_id)
-        return [
-            v for k, v in study_system_attrs.items() if k.startswith(_POPULATION_CACHE_KEY_PREFIX)
-        ]
-
-    study.optimize(lambda t: [t.suggest_float("x", 0, 9)], n_trials=10)
-    cached_entries = get_cached_entries(study)
-    assert len(cached_entries) == 0
-
-    study.optimize(lambda t: [t.suggest_float("x", 0, 9)], n_trials=1)
-    cached_entries = get_cached_entries(study)
-    assert len(cached_entries) == 1
-    assert cached_entries[0][0] == 0  # Cached generation.
-    assert len(cached_entries[0][1]) == 10  # Population size.
-
-    study.optimize(lambda t: [t.suggest_float("x", 0, 9)], n_trials=10)
-    cached_entries = get_cached_entries(study)
-    assert len(cached_entries) == 1
-    assert cached_entries[0][0] == 1  # Cached generation.
-    assert len(cached_entries[0][1]) == 10  # Population size.
-
-
-def test_constraints_func_experimental_warning() -> None:
-    with pytest.warns(optuna.exceptions.ExperimentalWarning):
+def test_constraints_func_deprecation_warning() -> None:
+    with pytest.warns(FutureWarning):
         NSGAIIISampler(constraints_func=lambda _: [0])
 
 
@@ -348,10 +323,10 @@ def test_crossover_invalid_population(crossover: BaseCrossover, population_size:
 def test_generate_reference_point(
     n_objectives: int, dividing_parameter: int, expected_reference_points: Sequence[Sequence[int]]
 ) -> None:
-    actual_reference_points = sorted(
-        _generate_default_reference_point(n_objectives, dividing_parameter).tolist()
-    )
-    assert actual_reference_points == expected_reference_points
+    actual_reference_points = _generate_default_reference_point(n_objectives, dividing_parameter)
+    order = np.lexsort([actual_reference_points[:, -i - 1] for i in range(n_objectives)])
+    sorted_actual_reference_points = actual_reference_points[order]
+    assert np.allclose(sorted_actual_reference_points, expected_reference_points)
 
 
 @pytest.mark.parametrize(

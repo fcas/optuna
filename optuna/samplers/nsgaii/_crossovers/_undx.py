@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -25,7 +24,7 @@ class UNDXCrossover(BaseCrossover):
       for real-coded genetic algorithms,
       Proceedings of the 1999 Congress on Evolutionary Computation-CEC99
       (Cat. No. 99TH8406), 1999, pp. 1581-1588 Vol. 2
-      <https://doi.org/10.1109/CEC.1999.782672>`_
+      <https://doi.org/10.1109/CEC.1999.782672>`__
 
     Args:
         sigma_xi:
@@ -37,7 +36,7 @@ class UNDXCrossover(BaseCrossover):
 
     n_parents = 3
 
-    def __init__(self, sigma_xi: float = 0.5, sigma_eta: Optional[float] = None) -> None:
+    def __init__(self, sigma_xi: float = 0.5, sigma_eta: float | None = None) -> None:
         self._sigma_xi = sigma_xi
         self._sigma_eta = sigma_eta
 

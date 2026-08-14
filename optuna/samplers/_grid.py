@@ -3,27 +3,25 @@ from __future__ import annotations
 import itertools
 from numbers import Real
 from typing import Any
-from typing import Dict
-from typing import List
-from typing import Mapping
-from typing import Optional
-from typing import Sequence
 from typing import TYPE_CHECKING
 from typing import Union
-import warnings
 
 import numpy as np
 
-from optuna.distributions import BaseDistribution
+from optuna._warnings import optuna_warn
 from optuna.logging import get_logger
 from optuna.samplers import BaseSampler
 from optuna.samplers._lazy_random_state import LazyRandomState
-from optuna.trial import FrozenTrial
 from optuna.trial import TrialState
 
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from collections.abc import Sequence
+
+    from optuna.distributions import BaseDistribution
     from optuna.study import Study
+    from optuna.trial import FrozenTrial
 
 
 GridValueType = Union[str, float, int, bool, None]
@@ -33,10 +31,16 @@ _logger = get_logger(__name__)
 
 
 class GridSampler(BaseSampler):
-    """Sampler using grid search.
+    """Sampler that performs exhaustive search over the define-and-run user-specified grids.
 
     With :class:`~optuna.samplers.GridSampler`, the trials suggest all combinations of parameters
     in the given search space during the study.
+
+    .. note::
+        :class:`~optuna.samplers.BruteForceSampler` also provides the exhaustive search feature.
+        Unlike :class:`~optuna.samplers.GridSampler`, :class:`~optuna.samplers.BruteForceSampler`
+        does not ask users to provide search space and it supports hierarchical, aka dynamic search
+        space, enabling users to seamlessly enjoy the exhaustive search.
 
     Example:
 
@@ -102,14 +106,15 @@ class GridSampler(BaseSampler):
             A dictionary whose key and value are a parameter name and the corresponding candidates
             of values, respectively.
         seed:
-            A seed to fix the order of trials as the grid is randomly shuffled. Please note that
-            it is not recommended using this option in distributed optimization settings since
-            this option cannot ensure the order of trials and may increase the number of duplicate
-            suggestions during distributed optimization.
+            A seed to fix the order of trials as the grid is randomly shuffled. This shuffle is
+            beneficial when the number of grids is larger than ``n_trials`` in
+            :meth:`~optuna.Study.optimize` to suppress suggesting similar grids. Please note
+            that fixing ``seed`` for each process is strongly recommended in distributed
+            optimization to avoid duplicated suggestions.
     """
 
     def __init__(
-        self, search_space: Mapping[str, Sequence[GridValueType]], seed: Optional[int] = None
+        self, search_space: Mapping[str, Sequence[GridValueType]], seed: int | None = None
     ) -> None:
         for param_name, param_values in search_space.items():
             for value in param_values:
@@ -122,7 +127,7 @@ class GridSampler(BaseSampler):
         self._all_grids = list(itertools.product(*self._search_space.values()))
         self._param_names = sorted(search_space.keys())
         self._n_min_trials = len(self._all_grids)
-        self._rng = LazyRandomState(seed)
+        self._rng = LazyRandomState(seed or 0)
         self._rng.rng.shuffle(self._all_grids)  # type: ignore[arg-type]
 
     def reseed_rng(self) -> None:
@@ -134,8 +139,8 @@ class GridSampler(BaseSampler):
         # object is hard to get at the beginning of trial, while we need the access to the object
         # to validate the sampled value.
 
-        # When the trial is created by RetryFailedTrialCallback or enqueue_trial, we should not
-        # assign a new grid_id.
+        # When the trial is created by RetryHeartbeatStaleTrialCallback or enqueue_trial, we
+        # should not assign a new grid_id.
         if "grid_id" in trial.system_attrs or "fixed_params" in trial.system_attrs:
             return
 
@@ -171,12 +176,12 @@ class GridSampler(BaseSampler):
 
     def infer_relative_search_space(
         self, study: Study, trial: FrozenTrial
-    ) -> Dict[str, BaseDistribution]:
+    ) -> dict[str, BaseDistribution]:
         return {}
 
     def sample_relative(
-        self, study: Study, trial: FrozenTrial, search_space: Dict[str, BaseDistribution]
-    ) -> Dict[str, Any]:
+        self, study: Study, trial: FrozenTrial, search_space: dict[str, BaseDistribution]
+    ) -> dict[str, Any]:
         return {}
 
     def sample_independent(
@@ -191,17 +196,14 @@ class GridSampler(BaseSampler):
             raise ValueError(message)
 
         if param_name not in self._search_space:
-            message = "The parameter name, {}, is not found in the given grid.".format(param_name)
+            message = f"The parameter name, {param_name}, is not found in the given grid."
             raise ValueError(message)
 
-        # TODO(c-bata): Reduce the number of duplicated evaluations on multiple workers.
-        # Current selection logic may evaluate the same parameters multiple times.
-        # See https://gist.github.com/c-bata/f759f64becb24eea2040f4b2e3afce8f for details.
         grid_id = trial.system_attrs["grid_id"]
         param_value = self._all_grids[grid_id][self._param_names.index(param_name)]
         contains = param_distribution._contains(param_distribution.to_internal_repr(param_value))
         if not contains:
-            warnings.warn(
+            optuna_warn(
                 f"The value `{param_value}` is out of range of the parameter `{param_name}`. "
                 f"The value will be used but the actual distribution is: `{param_distribution}`."
             )
@@ -213,7 +215,7 @@ class GridSampler(BaseSampler):
         study: Study,
         trial: FrozenTrial,
         state: TrialState,
-        values: Optional[Sequence[float]],
+        values: Sequence[float] | None,
     ) -> None:
         target_grids = self._get_unvisited_grid_ids(study)
 
@@ -230,13 +232,13 @@ class GridSampler(BaseSampler):
             return
 
         message = (
-            "{} contains a value with the type of {}, which is not supported by "
-            "`GridSampler`. Please make sure a value is `str`, `int`, `float`, `bool`"
-            " or `None` for persistent storage.".format(param_name, type(param_value))
+            f"{param_name} contains a value with the type of {type(param_value)}, "
+            "which is not supported by `GridSampler`. Please make sure a value is `str`, "
+            "`int`, `float`, `bool` or `None` for persistent storage."
         )
-        warnings.warn(message)
+        optuna_warn(message)
 
-    def _get_unvisited_grid_ids(self, study: Study) -> List[int]:
+    def _get_unvisited_grid_ids(self, study: Study) -> list[int]:
         # List up unvisited grids based on already finished ones.
         visited_grids = []
         running_grids = []

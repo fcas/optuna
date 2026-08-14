@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
-
 from optuna._experimental import experimental_class
 from optuna.samplers.nsgaii._crossovers._base import BaseCrossover
 
 
 if TYPE_CHECKING:
+    import numpy as np
+
     from optuna.study import Study
 
 
@@ -22,7 +22,7 @@ class BLXAlphaCrossover(BaseCrossover):
 
     - `Eshelman, L. and J. D. Schaffer.
       Real-Coded Genetic Algorithms and Interval-Schemata. FOGA (1992).
-      <https://doi.org/10.1016/B978-0-08-094832-4.50018-0>`_
+      <https://doi.org/10.1016/B978-0-08-094832-4.50018-0>`__
 
     Args:
         alpha:

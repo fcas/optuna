@@ -1,9 +1,9 @@
+from __future__ import annotations
+
 import copy
 import json
 from typing import Any
 from typing import cast
-from typing import Dict
-from typing import Optional
 import warnings
 
 import numpy as np
@@ -15,7 +15,7 @@ from optuna import distributions
 _choices = (None, True, False, 0, 1, 0.0, 1.0, float("nan"), float("inf"), -float("inf"), "", "a")
 _choices_json = '[null, true, false, 0, 1, 0.0, 1.0, NaN, Infinity, -Infinity, "", "a"]'
 
-EXAMPLE_DISTRIBUTIONS: Dict[str, Any] = {
+EXAMPLE_DISTRIBUTIONS: dict[str, Any] = {
     "i": distributions.IntDistribution(low=1, high=9, log=False),
     # i2 and i3 are identical to i, and tested for cases when `log` and `step` are omitted in json.
     "i2": distributions.IntDistribution(low=1, high=9, log=False),
@@ -37,10 +37,10 @@ EXAMPLE_JSONS = {
     "i2": '{"name": "IntDistribution", "attributes": {"low": 1, "high": 9, "log": false}}',
     "i3": '{"name": "IntDistribution", '
     '"attributes": {"low": 1, "high": 9, "log": false, "step": 1}}',
-    "il": '{"name": "IntDistribution", ' '"attributes": {"low": 2, "high": 12, "log": true}}',
+    "il": '{"name": "IntDistribution", "attributes": {"low": 2, "high": 12, "log": true}}',
     "il2": '{"name": "IntDistribution", '
     '"attributes": {"low": 2, "high": 12, "log": true, "step": 1}}',
-    "id": '{"name": "IntDistribution", ' '"attributes": {"low": 1, "high": 9, "step": 2}}',
+    "id": '{"name": "IntDistribution", "attributes": {"low": 1, "high": 9, "step": 2}}',
     "id2": '{"name": "IntDistribution", '
     '"attributes": {"low": 1, "high": 9, "log": false, "step": 2}}',
     "f": '{"name": "FloatDistribution", '
@@ -221,7 +221,7 @@ def test_int_internal_representation(value: Any) -> None:
         (-1, dict(log=True)),
     ],
 )
-def test_int_internal_representation_error(value: Any, kwargs: Dict[str, Any]) -> None:
+def test_int_internal_representation_error(value: Any, kwargs: dict[str, Any]) -> None:
     i = distributions.IntDistribution(low=1, high=10, **kwargs)
     with pytest.raises(ValueError):
         i.to_internal_repr(value)
@@ -255,7 +255,7 @@ def test_float_internal_representation(value: Any) -> None:
         (-1.0, dict(log=True)),
     ],
 )
-def test_float_internal_representation_error(value: Any, kwargs: Dict[str, Any]) -> None:
+def test_float_internal_representation_error(value: Any, kwargs: dict[str, Any]) -> None:
     f = distributions.FloatDistribution(low=2.0, high=7.0, **kwargs)
     with pytest.raises(ValueError):
         f.to_internal_repr(value)
@@ -272,7 +272,7 @@ def test_categorical_internal_representation() -> None:
     # We need to create new objects to compare NaNs.
     # See https://github.com/optuna/optuna/pull/3567#pullrequestreview-974939837.
     c_ = distributions.json_to_distribution(EXAMPLE_JSONS["c1"])
-    for choice in cast(distributions.CategoricalDistribution, c_).choices:
+    for choice in cast("distributions.CategoricalDistribution", c_).choices:
         if isinstance(choice, float) and np.isnan(choice):
             assert np.isnan(c.to_external_repr(c.to_internal_repr(choice)))
         else:
@@ -318,7 +318,7 @@ def test_int_contains(expected: bool, value: float, step: int) -> None:
         (False, 6.1, 2.0),
     ],
 )
-def test_float_contains(expected: bool, value: float, step: Optional[float]) -> None:
+def test_float_contains(expected: bool, value: float, step: float | None) -> None:
     with warnings.catch_warnings():
         # When `step` is 2.0, UserWarning will be raised since the range is not divisible by 2.
         # The range will be replaced with [2.0, 6.0].
@@ -401,7 +401,7 @@ def test_int_single(expected: bool, low: int, high: int, log: bool, step: int) -
     ],
 )
 def test_float_single(
-    expected: bool, low: float, high: float, log: bool, step: Optional[float]
+    expected: bool, low: float, high: float, log: bool, step: float | None
 ) -> None:
     with warnings.catch_warnings():
         # When `step` is 0.3, UserWarning will be raised since the range is not divisible by 0.3.
@@ -470,7 +470,7 @@ def test_int_distribution_asdict(key: str, low: int, high: int, log: bool, step:
     ],
 )
 def test_float_distribution_asdict(
-    key: str, low: float, high: float, log: bool, step: Optional[float]
+    key: str, low: float, high: float, log: bool, step: float | None
 ) -> None:
     expected_dict = {"low": low, "high": high, "log": log, "step": step}
     assert EXAMPLE_DISTRIBUTIONS[key]._asdict() == expected_dict
@@ -590,20 +590,3 @@ def test_convert_old_distribution_to_new_distribution_noop() -> None:
 
     ild = distributions.IntDistribution(low=1, high=10, log=True)
     assert distributions._convert_old_distribution_to_new_distribution(ild) == ild
-
-
-def test_is_distribution_log() -> None:
-    lfd = distributions.FloatDistribution(low=1, high=10, log=True)
-    assert distributions._is_distribution_log(lfd)
-
-    lid = distributions.IntDistribution(low=1, high=10, log=True)
-    assert distributions._is_distribution_log(lid)
-
-    fd = distributions.FloatDistribution(low=0, high=10, log=False)
-    assert not distributions._is_distribution_log(fd)
-
-    id = distributions.IntDistribution(low=0, high=10, log=False)
-    assert not distributions._is_distribution_log(id)
-
-    cd = distributions.CategoricalDistribution(choices=["a", "b", "c"])
-    assert not distributions._is_distribution_log(cd)

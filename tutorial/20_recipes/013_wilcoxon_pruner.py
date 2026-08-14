@@ -4,11 +4,11 @@
 Early-stopping independent evaluations by Wilcoxon pruner
 ============================================================
 
-This tutorial showcases Optuna's `WilcoxonPruner <https://optuna.readthedocs.io/en/latest/reference/generated/optuna.pruners.WilcoxonPruner.html>`_.
+This tutorial showcases Optuna's :class:`~optuna.pruners.WilcoxonPruner`.
 This pruner is effective for objective functions that averages multiple evaluations.
 
-We solve `Traveling Salesman Problem (TSP) <https://en.wikipedia.org/w/index.php?title=Travelling_salesman_problem&oldid=1211575788>`_
-by `Simulated Annealing (SA) <https://en.wikipedia.org/w/index.php?title=Simulated_annealing&oldid=1187355062>`_.
+We solve `Traveling Salesman Problem (TSP) <https://en.wikipedia.org/w/index.php?title=Travelling_salesman_problem&oldid=1211575788>`__
+by `Simulated Annealing (SA) <https://en.wikipedia.org/w/index.php?title=Simulated_annealing&oldid=1187355062>`__.
 
 Overview: Solving Traveling Salesman Problem with Simulated Annealing
 ----------------------------------------------------------------------------
@@ -27,8 +27,8 @@ SA starts with an initial solution (it can be constructed by a simpler heuristic
 like greedy method), and it randomly checks the neighborhood (defined later)
 of the solution. If a neighbor is better, the solution is updated to the neighbor.
 If the neighbor is worse, SA still updates the solution to the neighbor with
-probability :math:`e^{-\Delta c / T}`, where
-:math:`\Delta c (> 0)` is the difference of
+probability :math:`e^{-\\Delta c / T}`, where
+:math:`\\Delta c (> 0)` is the difference of
 the cost (sum of the distance) between the new solution and the old one and
 :math:`T` is a parameter called "temperature". The temperature controls
 how much worsening of the solution is tolerated to escape from the local minimum
@@ -39,7 +39,7 @@ a random walk and the optimization will be inefficient. Typically, we set a
 decreases to zero.
 
 There are several ways to define neighborhood for TSP, but we use a
-simple neighborhood called `2-opt <https://en.wikipedia.org/w/index.php?title=2-opt&oldid=1194969927>`_. 2-opt neighbor chooses a path in
+simple neighborhood called `2-opt <https://en.wikipedia.org/w/index.php?title=2-opt&oldid=1194969927>`__. 2-opt neighbor chooses a path in
 the current solution and reverses the visiting order in the path.
 For example, if the initial solution is `a→b→c→d→e→a`, `a→d→c→b→e→a` is
 a 2-opt neighbor (the path from `b` to `d` is reversed).
@@ -100,7 +100,6 @@ def tsp_greedy(vertices: np.ndarray) -> np.ndarray:
 
 
 def tsp_simulated_annealing(vertices: np.ndarray, options: SAOptions) -> np.ndarray:
-
     def temperature(t: float):
         assert 0.0 <= t and t <= 1.0
         return options.T0 * (1 - t) ** options.alpha
@@ -114,7 +113,6 @@ def tsp_simulated_annealing(vertices: np.ndarray, options: SAOptions) -> np.ndar
     remaining_patience = options.patience
 
     for iter in range(options.max_iter):
-
         i = np.random.randint(0, N)
         j = (i + 2 + np.random.randint(0, N - 3)) % N
         i, j = min(i, j), max(i, j)

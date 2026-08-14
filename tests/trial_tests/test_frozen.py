@@ -3,14 +3,12 @@ from __future__ import annotations
 import copy
 import datetime
 from typing import Any
-from typing import Tuple
 
 import pytest
 
 from optuna import create_study
 from optuna.distributions import BaseDistribution
 from optuna.distributions import FloatDistribution
-from optuna.distributions import IntDistribution
 from optuna.testing.storages import STORAGE_MODES
 from optuna.testing.storages import StorageSupplier
 import optuna.trial
@@ -67,12 +65,6 @@ def test_lt() -> None:
     assert trials[1] is trial_other
 
 
-def test_repr() -> None:
-    trial = _create_trial()
-
-    assert trial == eval(repr(trial))
-
-
 @pytest.mark.parametrize("storage_mode", STORAGE_MODES)
 def test_sampling(storage_mode: str) -> None:
     def objective(trial: BaseTrial) -> float:
@@ -106,7 +98,7 @@ def test_set_value() -> None:
 def test_set_values() -> None:
     trial = _create_trial()
     trial.values = (0.1, 0.2)
-    assert trial.values == [0.1, 0.2]  # type: ignore[comparison-overlap]
+    assert trial.values == [0.1, 0.2]
 
     trial = _create_trial()
     trial.values = [0.1, 0.2]
@@ -171,7 +163,7 @@ def test_validate() -> None:
         invalid_trial._validate()
 
     # Invalid: Inconsistent `params` and `distributions`
-    inconsistent_pairs: list[Tuple[dict[str, Any], dict[str, BaseDistribution]]] = [
+    inconsistent_pairs: list[tuple[dict[str, Any], dict[str, BaseDistribution]]] = [
         # `params` has an extra element.
         ({"x": 0.1, "y": 0.5}, {"x": FloatDistribution(0, 1)}),
         # `distributions` has an extra element.
@@ -415,27 +407,3 @@ def test_create_trial_distribution_conversion_noop() -> None:
 
     # Check fixed_distributions doesn't change.
     assert trial.distributions == fixed_distributions
-
-
-@pytest.mark.filterwarnings("ignore::FutureWarning")
-@pytest.mark.parametrize("positional_args_names", [[], ["step"], ["step", "log"]])
-def test_suggest_int_positional_args(positional_args_names: list[str]) -> None:
-    # If log is specified as positional, step must also be provided as positional.
-    trial = FrozenTrial(
-        number=0,
-        trial_id=0,
-        state=TrialState.COMPLETE,
-        value=0.0,
-        values=None,
-        datetime_start=datetime.datetime.now(),
-        datetime_complete=datetime.datetime.now(),
-        params={"x": 1},
-        distributions={"x": IntDistribution(-1, 1)},
-        user_attrs={},
-        system_attrs={},
-        intermediate_values={},
-    )
-    kwargs = dict(step=1, log=False)
-    args = [kwargs[name] for name in positional_args_names]
-    # No error should not be raised even if the coding style is old.
-    trial.suggest_int("x", -1, 1, *args)

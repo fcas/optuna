@@ -1,5 +1,6 @@
-from typing import List
-from typing import Tuple
+from __future__ import annotations
+
+from typing import Literal
 
 import pytest
 
@@ -17,7 +18,9 @@ def test_median_pruner_with_one_trial() -> None:
 
 
 @pytest.mark.parametrize("direction_value", [("minimize", 2), ("maximize", 0.5)])
-def test_median_pruner_intermediate_values(direction_value: Tuple[str, float]) -> None:
+def test_median_pruner_intermediate_values(
+    direction_value: tuple[Literal["minimize", "maximize"], float],
+) -> None:
     direction, intermediate_value = direction_value
     pruner = optuna.pruners.MedianPruner(0, 0)
     study = optuna.study.create_study(direction=direction, pruner=pruner)
@@ -110,7 +113,7 @@ def test_median_pruner_n_warmup_steps() -> None:
     ],
 )
 def test_median_pruner_interval_steps(
-    n_warmup_steps: int, interval_steps: int, report_steps: int, expected_prune_steps: List[int]
+    n_warmup_steps: int, interval_steps: int, report_steps: int, expected_prune_steps: list[int]
 ) -> None:
     pruner = optuna.pruners.MedianPruner(0, n_warmup_steps, interval_steps)
     study = optuna.study.create_study(pruner=pruner)

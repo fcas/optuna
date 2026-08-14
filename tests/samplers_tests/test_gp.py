@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+import importlib
+import sys
+import warnings
+
 from _pytest.logging import LogCaptureFixture
 import numpy as np
+import pytest
 
 import optuna
-import optuna._gp.acqf as acqf
+import optuna._gp.acqf as acqf_module
+import optuna._gp.gp as optuna_gp
 import optuna._gp.optim_mixed as optim_mixed
 import optuna._gp.prior as prior
 import optuna._gp.search_space as gp_search_space
+from optuna.samplers import GPSampler
+from optuna.trial import FrozenTrial
 
 
 def test_after_convergence(caplog: LogCaptureFixture) -> None:
@@ -19,11 +28,9 @@ def test_after_convergence(caplog: LogCaptureFixture) -> None:
     X = np.array(X_uniform + X_uniform_near_optimal + X_optimal)
     score_vals = -(X - np.mean(X)) / np.std(X)
     search_space = gp_search_space.SearchSpace(
-        scale_types=np.array([gp_search_space.ScaleType.LINEAR]),
-        bounds=np.array([[0.0, 1.0]]),
-        steps=np.zeros(1, dtype=float),
+        {"a": optuna.distributions.FloatDistribution(0.0, 1.0)}
     )
-    kernel_params = optuna._gp.gp.fit_kernel_params(
+    gpr = optuna_gp.fit_kernel_params(
         X=X[:, np.newaxis],
         Y=score_vals,
         is_categorical=np.array([False]),
@@ -31,15 +38,124 @@ def test_after_convergence(caplog: LogCaptureFixture) -> None:
         minimum_noise=prior.DEFAULT_MINIMUM_NOISE_VAR,
         deterministic_objective=False,
     )
-    acqf_params = acqf.create_acqf_params(
-        acqf_type=acqf.AcquisitionFunctionType.LOG_EI,
-        kernel_params=kernel_params,
-        search_space=search_space,
-        X=X[:, np.newaxis],
-        Y=score_vals,
+    acqf_params = acqf_module.LogEI(
+        gpr=gpr, search_space=search_space, threshold=np.max(score_vals)
     )
     caplog.clear()
     optuna.logging.enable_propagation()
     optim_mixed.optimize_acqf_mixed(acqf_params, rng=np.random.RandomState(42))
     # len(caplog.text) > 0 means the optimization has already converged.
     assert len(caplog.text) > 0, "Did you change the kernel implementation?"
+
+
+@pytest.mark.parametrize("constraint_value", [-1.0, 0.0, 1.0, -float("inf"), float("inf")])
+@pytest.mark.parametrize("n_objectives", [1, 2])
+@pytest.mark.filterwarnings("ignore:.*GPSampler cannot handle infinite values*")
+def test_constraints_func(constraint_value: float, n_objectives: int) -> None:
+    n_trials = 5
+    constraints_func_call_count = 0
+
+    def constraints_func(trial: FrozenTrial) -> Sequence[float]:
+        nonlocal constraints_func_call_count
+        constraints_func_call_count += 1
+
+        return (constraint_value + trial.number,)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        sampler = GPSampler(n_startup_trials=2, constraints_func=constraints_func)
+
+    def objective(trial: optuna.Trial) -> float | tuple[float, float]:
+        x = trial.suggest_float("x", 0, 1)
+        if n_objectives == 1:
+            return x
+        else:
+            return x, (x - 2) ** 2
+
+    study = optuna.create_study(directions=["minimize"] * n_objectives, sampler=sampler)
+    study.optimize(objective, n_trials=n_trials)
+
+    assert len(study.trials) == n_trials
+    assert constraints_func_call_count == n_trials
+    for trial in study.trials:
+        for x, y in zip(trial.constraints.values(), (constraint_value + trial.number,)):
+            assert x == y
+
+
+@pytest.mark.parametrize("n_objectives", [1, 2])
+def test_constraints_func_nan(n_objectives: int) -> None:
+    n_trials = 5
+
+    def constraints_func(_: FrozenTrial) -> Sequence[float]:
+        return (float("nan"),)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        sampler = GPSampler(n_startup_trials=2, constraints_func=constraints_func)
+
+    def objective(
+        trial: optuna.Trial | optuna.trial.FrozenTrial,
+    ) -> tuple[float] | tuple[float, float]:
+        x = trial.suggest_float("x", 0, 1)
+        if n_objectives == 1:
+            return (x,)
+        else:
+            return x, (x - 2) ** 2
+
+    study = optuna.create_study(directions=["minimize"] * n_objectives, sampler=sampler)
+    with pytest.raises(ValueError):
+        study.optimize(objective, n_trials=n_trials)
+
+    trials = study.get_trials()
+    assert len(trials) == 1  # The error stops optimization, but completed trials are recorded.
+    assert all(0 <= x <= 1 for x in trials[0].params.values())  # The params are normal.
+    assert trials[0].values == list(objective(trials[0]))  # The values are normal.
+    assert len(trials[0].constraints) == 0  # No constraints are set.
+
+
+def test_behavior_without_greenlet(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "greenlet", None)
+    import optuna._gp.batched_lbfgsb as optimization_module
+
+    importlib.reload(optimization_module)
+    assert optimization_module._greenlet_imports.is_successful() is False
+
+    # See if optimization still works without greenlet
+    import optuna
+
+    sampler = optuna.samplers.GPSampler(seed=42)
+    study = optuna.create_study(sampler=sampler)
+    study.optimize(lambda trial: trial.suggest_float("x", -10, 10) ** 2, n_trials=15)
+
+
+def test_gpsampler_with_cuda_default_device() -> None:
+    """Test that GPSampler works when torch.set_default_device('cuda') is set.
+
+    Regression test for issue #6113. When users set torch.set_default_device('cuda'),
+    GPSampler should still work by forcing CPU device internally.
+    """
+    import torch
+
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    # Set CUDA as the default device (simulating user's global setting)
+    original_device = torch.get_default_device()
+    torch.set_default_device("cuda")
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", optuna.exceptions.ExperimentalWarning)
+            sampler = GPSampler(n_startup_trials=2, seed=42)
+
+        study = optuna.create_study(sampler=sampler)
+        # Run enough trials to trigger GP sampling (past startup trials)
+        study.optimize(lambda trial: trial.suggest_float("x", -10, 10) ** 2, n_trials=5)
+
+        assert len(study.trials) == 5
+    finally:
+        # Restore original device setting
+        if original_device is None:
+            torch.set_default_device(None)
+        else:
+            torch.set_default_device(original_device)

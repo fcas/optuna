@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from typing import NamedTuple
+from typing import TYPE_CHECKING
 
 import tqdm
 
 import optuna
 from optuna._experimental import experimental_func
 from optuna.logging import get_logger
-from optuna.study.study import Study
 from optuna.terminator import BaseErrorEvaluator
 from optuna.terminator import BaseImprovementEvaluator
 from optuna.terminator import CrossValidationErrorEvaluator
@@ -16,6 +16,10 @@ from optuna.terminator.erroreval import StaticErrorEvaluator
 from optuna.terminator.improvement.evaluator import BestValueStagnationEvaluator
 from optuna.terminator.improvement.evaluator import DEFAULT_MIN_N_TRIALS
 from optuna.visualization._plotly_imports import _imports
+
+
+if TYPE_CHECKING:
+    from optuna.study.study import Study
 
 
 if _imports.is_successful():
@@ -51,44 +55,6 @@ def plot_terminator_improvement(
     ``error_evaluator`` if the ``plot_error`` argument is set to :obj:`True`.
     Note that this function may take some time to compute
     the improvement potentials.
-
-    Example:
-
-        The following code snippet shows how to plot improvement potentials,
-        together with cross-validation errors.
-
-        .. plotly::
-
-            from lightgbm import LGBMClassifier
-            from sklearn.datasets import load_wine
-            from sklearn.model_selection import cross_val_score
-            from sklearn.model_selection import KFold
-            import optuna
-            from optuna.terminator import report_cross_validation_scores
-            from optuna.visualization import plot_terminator_improvement
-
-
-            def objective(trial):
-                X, y = load_wine(return_X_y=True)
-                clf = LGBMClassifier(
-                    reg_alpha=trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
-                    reg_lambda=trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
-                    num_leaves=trial.suggest_int("num_leaves", 2, 256),
-                    colsample_bytree=trial.suggest_float("colsample_bytree", 0.4, 1.0),
-                    subsample=trial.suggest_float("subsample", 0.4, 1.0),
-                    subsample_freq=trial.suggest_int("subsample_freq", 1, 7),
-                    min_child_samples=trial.suggest_int("min_child_samples", 5, 100),
-                )
-                scores = cross_val_score(clf, X, y, cv=KFold(n_splits=5, shuffle=True))
-                report_cross_validation_scores(trial, scores)
-                return scores.mean()
-
-
-            study = optuna.create_study()
-            study.optimize(objective, n_trials=30)
-
-            fig = plot_terminator_improvement(study, plot_error=True)
-            fig.show()
 
     Args:
         study:
@@ -223,7 +189,7 @@ def _get_y_range(info: _ImprovementInfo, min_n_trials: int) -> tuple[float, floa
         max_value = max(max_value, max(info.errors))
 
     padding = (max_value - min_value) * PADDING_RATIO_Y
-    return (min_value - padding, max_value + padding)
+    return min_value - padding, max_value + padding
 
 
 def _get_improvement_plot(info: _ImprovementInfo, min_n_trials: int) -> "go.Figure":

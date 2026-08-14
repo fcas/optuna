@@ -20,7 +20,6 @@ import warnings
 
 import plotly.io as pio
 from sklearn.exceptions import ConvergenceWarning
-from sphinx_gallery.sorting import FileNameSortKey
 
 import optuna
 
@@ -38,6 +37,8 @@ release = optuna.version.__version__
 
 # -- General configuration ---------------------------------------------------
 
+pio.renderers.default = "sphinx_gallery"
+
 # If your documentation needs a minimal Sphinx version, state it here.
 #
 # needs_sphinx = '1.0'
@@ -46,6 +47,7 @@ release = optuna.version.__version__
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = [
+    "notfound.extension",
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
     "sphinx.ext.doctest",
@@ -55,10 +57,9 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx.ext.githubpages",
+    "sphinx.ext.graphviz",
     "sphinx_copybutton",
-    "sphinx_gallery.gen_gallery",
-    "matplotlib.sphinxext.plot_directive",
-    "sphinx_plotly_directive",
+    "sphinx_gallery.gen_gallery"
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -76,7 +77,10 @@ master_doc = "index"
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path .
-exclude_patterns = []
+exclude_patterns = [
+    "reference/visualization/generated/index.rst",
+    "reference/visualization/matplotlib/generated/index.rst",
+]
 
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = "sphinx"
@@ -92,7 +96,12 @@ html_theme = "sphinx_rtd_theme"
 # further.  For a list of options available for each theme, see the
 # documentation.
 #
-html_theme_options = {"logo_only": True, "navigation_with_keys": True}
+html_theme_options = {
+    "logo_only": True,
+    "navigation_with_keys": True,
+    "language_selector": False,
+    "version_selector": False,
+}
 
 html_favicon = "../image/favicon.ico"
 
@@ -168,15 +177,11 @@ texinfo_documents = [
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
-    "distributed": ("https://distributed.dask.org/en/stable", None),
-    "lightgbm": ("https://lightgbm.readthedocs.io/en/latest", None),
     "matplotlib": ("https://matplotlib.org/stable", None),
     "numpy": ("https://numpy.org/doc/stable", None),
     "scipy": ("https://docs.scipy.org/doc/scipy", None),
-    "sklearn": ("https://scikit-learn.org/stable", None),
-    "torch": ("https://pytorch.org/docs/stable", None),
-    "pandas": ("https://pandas.pydata.org/docs", None),
     "plotly": ("https://plotly.com/python-api-reference", None),
+    "optuna_integration": ("https://optuna-integration.readthedocs.io/en/latest/", None),
 }
 
 # -- Extension configuration -------------------------------------------------
@@ -184,7 +189,7 @@ autosummary_generate = True
 autodoc_typehints = "description"
 autodoc_default_options = {
     "members": True,
-    "inherited-members": True,
+    "inherited-members": "int",
     "exclude-members": "with_traceback",
 }
 
@@ -192,20 +197,28 @@ autodoc_default_options = {
 copybutton_prompt_text = "$ "
 
 # Sphinx Gallery
-pio.renderers.default = "sphinx_gallery"
+pio.renderers.default = "sphinx_gallery_png"
 
 sphinx_gallery_conf = {
+    "doc_module": ("sphinx_gallery"),
     "examples_dirs": [
         "../../tutorial/10_key_features",
         "../../tutorial/20_recipes",
+        "../visualization_examples",
+        "../visualization_matplotlib_examples",
     ],
     "gallery_dirs": [
         "tutorial/10_key_features",
         "tutorial/20_recipes",
+        "reference/visualization/generated",
+        "reference/visualization/matplotlib/generated",
     ],
-    "within_subsection_order": FileNameSortKey,
+    "compress_images": ("images", "thumbnails"),
+    "thumbnail_size": (400, 280),
+    "within_subsection_order": "FileNameSortKey",
     "filename_pattern": r"/*\.py",
     "first_notebook_cell": None,
+    "image_scrapers": ("matplotlib", "plotly.io._sg_scraper.plotly_sg_scraper"),
 }
 
 # matplotlib plot directive

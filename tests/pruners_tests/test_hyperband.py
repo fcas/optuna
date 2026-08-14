@@ -1,7 +1,8 @@
-from typing import Callable
+from __future__ import annotations
+
+from collections.abc import Callable
 from unittest import mock
 
-import numpy as np
 import pytest
 
 import optuna
@@ -99,14 +100,14 @@ def test_hyperband_max_resource_value_error() -> None:
         (lambda: optuna.samplers.TPESampler(n_startup_trials=1)),
         (
             lambda: optuna.samplers.GridSampler(
-                search_space={"value": np.linspace(0.0, 1.0, 8, endpoint=False).tolist()}
+                search_space={"value": [0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]}
             )
         ),
         (lambda: optuna.samplers.CmaEsSampler(n_startup_trials=1)),
     ],
 )
 def test_hyperband_filter_study(
-    sampler_init_func: Callable[[], optuna.samplers.BaseSampler]
+    sampler_init_func: Callable[[], optuna.samplers.BaseSampler],
 ) -> None:
     def objective(trial: optuna.trial.Trial) -> float:
         return trial.suggest_float("value", 0.0, 1.0)
@@ -130,7 +131,7 @@ def test_hyperband_filter_study(
                 reduction_factor=REDUCTION_FACTOR,
             )
             with mock.patch(
-                "optuna.samplers.{}.{}".format(sampler.__class__.__name__, method_name),
+                f"optuna.samplers.{sampler.__class__.__name__}.{method_name}",
                 wraps=getattr(sampler, method_name),
             ) as method_mock:
                 study = optuna.study.create_study(sampler=sampler, pruner=pruner)
@@ -151,7 +152,7 @@ def test_hyperband_filter_study(
     ],
 )
 def test_hyperband_no_filter_study(
-    pruner_init_func: Callable[[], optuna.pruners.BasePruner]
+    pruner_init_func: Callable[[], optuna.pruners.BasePruner],
 ) -> None:
     def objective(trial: optuna.trial.Trial) -> float:
         return trial.suggest_float("value", 0.0, 1.0)
@@ -165,7 +166,7 @@ def test_hyperband_no_filter_study(
         sampler = optuna.samplers.RandomSampler()
         pruner = pruner_init_func()
         with mock.patch(
-            "optuna.samplers.{}.{}".format(sampler.__class__.__name__, method_name),
+            f"optuna.samplers.{sampler.__class__.__name__}.{method_name}",
             wraps=getattr(sampler, method_name),
         ) as method_mock:
             study = optuna.study.create_study(sampler=sampler, pruner=pruner)
@@ -183,14 +184,14 @@ def test_hyperband_no_filter_study(
         (lambda: optuna.samplers.TPESampler(n_startup_trials=1)),
         (
             lambda: optuna.samplers.GridSampler(
-                search_space={"value": np.linspace(0.0, 1.0, 10, endpoint=False).tolist()}
+                search_space={"value": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]}
             )
         ),
         (lambda: optuna.samplers.CmaEsSampler(n_startup_trials=1)),
     ],
 )
 def test_hyperband_no_call_of_filter_study_in_should_prune(
-    sampler_init_func: Callable[[], optuna.samplers.BaseSampler]
+    sampler_init_func: Callable[[], optuna.samplers.BaseSampler],
 ) -> None:
     def objective(trial: optuna.trial.Trial) -> float:
         with mock.patch("optuna.pruners._filter_study") as method_mock:
@@ -236,6 +237,25 @@ def test_hyperband_pruner_and_grid_sampler() -> None:
         return x**2 + y**2
 
     study.optimize(objective, n_trials=10)
+
+    trials = study.trials
+    assert len(trials) == 9
+
+
+def test_hyperband_pruner_and_brute_force_sampler() -> None:
+    def objective(trial: optuna.trial.Trial) -> int:
+        x = trial.suggest_int("x", 0, 2)
+        y = trial.suggest_int("y", 0, 2)
+        for i in range(10):
+            trial.report(step=i, value=i * (x + y) / 10)
+            if trial.should_prune():
+                raise optuna.TrialPruned
+        return x + y
+
+    sampler = optuna.samplers.BruteForceSampler()
+    pruner = optuna.pruners.HyperbandPruner()
+    study = optuna.create_study(sampler=sampler, pruner=pruner)
+    study.optimize(objective)
 
     trials = study.trials
     assert len(trials) == 9

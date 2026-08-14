@@ -2,6 +2,9 @@
 If you want to add a new command, you also need to update the constant `_COMMANDS`
 """
 
+from __future__ import annotations
+
+import argparse
 from argparse import ArgumentParser
 from argparse import Namespace
 import datetime
@@ -12,19 +15,13 @@ import logging
 import os
 import sys
 from typing import Any
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Tuple
-from typing import Type
-from typing import Union
-import warnings
 
 import sqlalchemy.exc
 import yaml
 
 import optuna
 from optuna._imports import _LazyImport
+from optuna._warnings import optuna_warn
 from optuna.exceptions import CLIUsageError
 from optuna.exceptions import ExperimentalWarning
 from optuna.storages import BaseStorage
@@ -32,6 +29,8 @@ from optuna.storages import JournalFileStorage
 from optuna.storages import JournalRedisStorage
 from optuna.storages import JournalStorage
 from optuna.storages import RDBStorage
+from optuna.storages.journal import JournalFileBackend
+from optuna.storages.journal import JournalRedisBackend
 from optuna.trial import TrialState
 
 
@@ -40,13 +39,13 @@ _dataframe = _LazyImport("optuna.study._dataframe")
 _DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
-def _check_storage_url(storage_url: Optional[str]) -> str:
+def _check_storage_url(storage_url: str | None) -> str:
     if storage_url is not None:
         return storage_url
 
     env_storage = os.environ.get("OPTUNA_STORAGE")
     if env_storage is not None:
-        warnings.warn(
+        optuna_warn(
             "Specifying the storage url via 'OPTUNA_STORAGE' environment variable"
             " is an experimental feature. The interface can change in the future.",
             ExperimentalWarning,
@@ -55,11 +54,15 @@ def _check_storage_url(storage_url: Optional[str]) -> str:
     raise CLIUsageError("Storage URL is not specified.")
 
 
-def _get_storage(storage_url: Optional[str], storage_class: Optional[str]) -> BaseStorage:
+def _get_storage(storage_url: str | None, storage_class: str | None) -> BaseStorage:
     storage_url = _check_storage_url(storage_url)
     if storage_class:
+        if storage_class == JournalRedisBackend.__name__:
+            return JournalStorage(JournalRedisBackend(storage_url))
         if storage_class == JournalRedisStorage.__name__:
             return JournalStorage(JournalRedisStorage(storage_url))
+        if storage_class == JournalFileBackend.__name__:
+            return JournalStorage(JournalFileBackend(storage_url))
         if storage_class == JournalFileStorage.__name__:
             return JournalStorage(JournalFileStorage(storage_url))
         if storage_class == RDBStorage.__name__:
@@ -67,9 +70,9 @@ def _get_storage(storage_url: Optional[str], storage_class: Optional[str]) -> Ba
         raise CLIUsageError("Unsupported storage class")
 
     if storage_url.startswith("redis"):
-        return JournalStorage(JournalRedisStorage(storage_url))
+        return JournalStorage(JournalRedisBackend(storage_url))
     if os.path.isfile(storage_url):
-        return JournalStorage(JournalFileStorage(storage_url))
+        return JournalStorage(JournalFileBackend(storage_url))
     try:
         return RDBStorage(storage_url)
     except sqlalchemy.exc.ArgumentError:
@@ -93,8 +96,8 @@ def _format_value(value: Any) -> Any:
 
 
 def _convert_to_dict(
-    records: List[Dict[Tuple[str, str], Any]], columns: List[Tuple[str, str]], flatten: bool
-) -> Tuple[List[Dict[str, Any]], List[str]]:
+    records: list[dict[tuple[str, str], Any]], columns: list[tuple[str, str]], flatten: bool
+) -> tuple[list[dict[str, Any]], list[str]]:
     header = []
     ret = []
     if flatten:
@@ -129,7 +132,7 @@ def _convert_to_dict(
             if column[0] not in header:
                 header.append(column[0])
         for record in records:
-            attrs: Dict[str, Any] = {column_name: {} for column_name in header}
+            attrs: dict[str, Any] = {column_name: {} for column_name in header}
             for column in columns:
                 if column not in record:
                     continue
@@ -185,17 +188,20 @@ class CellValue:
             return f"{value:<{width}}"
 
 
-def _dump_value(records: List[Dict[str, Any]], header: List[str]) -> str:
+def _dump_value(records: list[dict[str, Any]], header: list[str]) -> str:
     values = []
     for record in records:
         row = []
         for column_name in header:
-            row.append(str(record.get(column_name, "")))
+            # Below follows the table formatting convention where record[column_name] is treated as
+            # an empty string if record[column_name] is None. e.g., {"a": None} is replaced with
+            # {"a": ""}
+            row.append(str(record[column_name]) if record.get(column_name) is not None else "")
         values.append(" ".join(row))
     return "\n".join(values)
 
 
-def _dump_table(records: List[Dict[str, Any]], header: List[str]) -> str:
+def _dump_table(records: list[dict[str, Any]], header: list[str]) -> str:
     rows = []
     for record in records:
         row = []
@@ -212,7 +218,10 @@ def _dump_table(records: List[Dict[str, Any]], header: List[str]) -> str:
         for t in value_types:
             if t == ValueType.STRING:
                 value_type = ValueType.STRING
-        max_width = max(len(header[column]), max(row[column].width() for row in rows))
+        if len(rows) == 0:
+            max_width = len(header[column])
+        else:
+            max_width = max(len(header[column]), max(row[column].width() for row in rows))
         separator += "-" * (max_width + 2) + "+"
         if value_type == ValueType.NUMERIC:
             header_string += f" {header[column]:>{max_width}} |"
@@ -225,15 +234,16 @@ def _dump_table(records: List[Dict[str, Any]], header: List[str]) -> str:
     ret += separator + "\n"
     ret += header_string + "\n"
     ret += separator + "\n"
-    ret += "\n".join(rows_string) + "\n"
+    for row_string in rows_string:
+        ret += row_string + "\n"
     ret += separator + "\n"
 
     return ret
 
 
 def _format_output(
-    records: Union[List[Dict[Tuple[str, str], Any]], Dict[Tuple[str, str], Any]],
-    columns: List[Tuple[str, str]],
+    records: list[dict[tuple[str, str], Any]] | dict[tuple[str, str], Any],
+    columns: list[tuple[str, str]],
     output_format: str,
     flatten: bool,
 ) -> str:
@@ -243,10 +253,7 @@ def _format_output(
         values, header = _convert_to_dict([records], columns, flatten)
 
     if output_format == "value":
-        if isinstance(records, list):
-            return _dump_value(values, header).strip()
-        else:
-            return str(values[0]).strip()
+        return _dump_value(values, header).strip()
     elif output_format == "table":
         return _dump_table(values, header).strip()
     elif output_format == "json":
@@ -420,7 +427,7 @@ class _Studies(_BaseCommand):
             "-f",
             "--format",
             type=str,
-            choices=("json", "table", "yaml"),
+            choices=("value", "json", "table", "yaml"),
             default="table",
             help="Output format.",
         )
@@ -442,7 +449,7 @@ class _Studies(_BaseCommand):
                 if s.datetime_start is not None
                 else None
             )
-            record: Dict[Tuple[str, str], Any] = {}
+            record: dict[tuple[str, str], Any] = {}
             record[("name", "")] = s.study_name
             record[("direction", "")] = tuple(d.name for d in s.directions)
             record[("n_trials", "")] = s.n_trials
@@ -474,7 +481,7 @@ class _Trials(_BaseCommand):
             "-f",
             "--format",
             type=str,
-            choices=("json", "table", "yaml"),
+            choices=("value", "json", "table", "yaml"),
             default="table",
             help="Output format.",
         )
@@ -486,7 +493,7 @@ class _Trials(_BaseCommand):
         )
 
     def take_action(self, parsed_args: Namespace) -> int:
-        warnings.warn(
+        optuna_warn(
             "'trials' is an experimental CLI command. The interface can change in the future.",
             ExperimentalWarning,
         )
@@ -524,7 +531,7 @@ class _BestTrial(_BaseCommand):
             "-f",
             "--format",
             type=str,
-            choices=("json", "table", "yaml"),
+            choices=("value", "json", "table", "yaml"),
             default="table",
             help="Output format.",
         )
@@ -536,7 +543,7 @@ class _BestTrial(_BaseCommand):
         )
 
     def take_action(self, parsed_args: Namespace) -> int:
-        warnings.warn(
+        optuna_warn(
             "'best-trial' is an experimental CLI command. The interface can change in the future.",
             ExperimentalWarning,
         )
@@ -577,7 +584,7 @@ class _BestTrials(_BaseCommand):
             "-f",
             "--format",
             type=str,
-            choices=("json", "table", "yaml"),
+            choices=("value", "json", "table", "yaml"),
             default="table",
             help="Output format.",
         )
@@ -589,7 +596,7 @@ class _BestTrials(_BaseCommand):
         )
 
     def take_action(self, parsed_args: Namespace) -> int:
-        warnings.warn(
+        optuna_warn(
             "'best-trials' is an experimental CLI command. The interface can change in the "
             "future.",
             ExperimentalWarning,
@@ -637,7 +644,7 @@ class _StorageUpgrade(_BaseCommand):
             storage.upgrade()
             self.logger.info("Completed to upgrade the storage.")
         else:
-            warnings.warn(
+            optuna_warn(
                 "Your optuna version seems outdated against the storage version. "
                 "Please try updating optuna to the latest version by "
                 "`$ pip install -U optuna`."
@@ -668,7 +675,7 @@ class _Ask(_BaseCommand):
             "-f",
             "--format",
             type=str,
-            choices=("json", "table", "yaml"),
+            choices=("value", "json", "table", "yaml"),
             default="json",
             help="Output format.",
         )
@@ -680,7 +687,7 @@ class _Ask(_BaseCommand):
         )
 
     def take_action(self, parsed_args: Namespace) -> int:
-        warnings.warn(
+        optuna_warn(
             "'ask' is an experimental CLI command. The interface can change in the future.",
             ExperimentalWarning,
         )
@@ -727,12 +734,15 @@ class _Ask(_BaseCommand):
             )
 
         except KeyError:
-            study = optuna.create_study(**create_study_kwargs)
+            raise KeyError(
+                "Implicit study creation within the 'ask' command was dropped in Optuna v4.0.0. "
+                "Please use the 'create-study' command beforehand."
+            )
         trial = study.ask(fixed_distributions=search_space)
 
         self.logger.info(f"Asked trial {trial.number} with parameters {trial.params}.")
 
-        record: Dict[Tuple[str, str], Any] = {("number", ""): trial.number}
+        record: dict[tuple[str, str], Any] = {("number", ""): trial.number}
         columns = [("number", "")]
 
         if len(trial.params) == 0 and not parsed_args.flatten:
@@ -769,7 +779,7 @@ class _Tell(_BaseCommand):
         )
 
     def take_action(self, parsed_args: Namespace) -> int:
-        warnings.warn(
+        optuna_warn(
             "'tell' is an experimental CLI command. The interface can change in the future.",
             ExperimentalWarning,
         )
@@ -782,7 +792,7 @@ class _Tell(_BaseCommand):
         )
 
         if parsed_args.state is not None:
-            state: Optional[TrialState] = TrialState[parsed_args.state.upper()]
+            state: TrialState | None = TrialState[parsed_args.state.upper()]
         else:
             state = None
 
@@ -801,7 +811,7 @@ class _Tell(_BaseCommand):
         return 0
 
 
-_COMMANDS: Dict[str, Type[_BaseCommand]] = {
+_COMMANDS: dict[str, type[_BaseCommand]] = {
     "create-study": _CreateStudy,
     "delete-study": _DeleteStudy,
     "study set-user-attr": _StudySetUserAttribute,
@@ -816,6 +826,23 @@ _COMMANDS: Dict[str, Type[_BaseCommand]] = {
 }
 
 
+def _parse_storage_class_without_suggesting_deprecated_choices(value: str) -> str:
+    choices = [
+        RDBStorage.__name__,
+        JournalFileBackend.__name__,
+        JournalRedisBackend.__name__,
+    ]
+    deprecated_choices = [
+        JournalFileStorage.__name__,
+        JournalRedisStorage.__name__,
+    ]
+    if value in choices + deprecated_choices:
+        return value
+    raise argparse.ArgumentTypeError(
+        f"Invalid choice: {value}  (choose from {str(choices)[1:-1]})"
+    )
+
+
 def _add_common_arguments(parser: ArgumentParser) -> ArgumentParser:
     parser.add_argument(
         "--storage",
@@ -827,13 +854,9 @@ def _add_common_arguments(parser: ArgumentParser) -> ArgumentParser:
     )
     parser.add_argument(
         "--storage-class",
-        help="Storage class hint (e.g. JournalFileStorage)",
+        help="Storage class hint (e.g. JournalFileBackend)",
         default=None,
-        choices=[
-            RDBStorage.__name__,
-            JournalFileStorage.__name__,
-            JournalRedisStorage.__name__,
-        ],
+        type=_parse_storage_class_without_suggesting_deprecated_choices,
     )
     verbose_group = parser.add_mutually_exclusive_group()
     verbose_group.add_argument(
@@ -869,7 +892,7 @@ def _add_common_arguments(parser: ArgumentParser) -> ArgumentParser:
 
 def _add_commands(
     main_parser: ArgumentParser, parent_parser: ArgumentParser
-) -> Dict[str, ArgumentParser]:
+) -> dict[str, ArgumentParser]:
     subparsers = main_parser.add_subparsers()
     command_name_to_subparser = {}
 
@@ -891,21 +914,19 @@ def _add_commands(
     return command_name_to_subparser
 
 
-def _get_parser(description: str = "") -> Tuple[ArgumentParser, Dict[str, ArgumentParser]]:
+def _get_parser(description: str = "") -> tuple[ArgumentParser, dict[str, ArgumentParser]]:
     # Use `parent_parser` is necessary to avoid namespace conflict for -h/--help
     # between `main_parser` and `subparser`.
     parent_parser = ArgumentParser(add_help=False)
     parent_parser = _add_common_arguments(parent_parser)
 
     main_parser = ArgumentParser(description=description, parents=[parent_parser])
-    main_parser.add_argument(
-        "--version", action="version", version="{0} {1}".format("optuna", optuna.__version__)
-    )
+    main_parser.add_argument("--version", action="version", version=f"optuna {optuna.__version__}")
     command_name_to_subparser = _add_commands(main_parser, parent_parser)
     return main_parser, command_name_to_subparser
 
 
-def _preprocess_argv(argv: List[str]) -> List[str]:
+def _preprocess_argv(argv: list[str]) -> list[str]:
     # Some preprocess is necessary for argv because some subcommand includes space
     # (e.g. optuna storage upgrade).
     argv = argv[1:] if len(argv) > 1 else ["help"]

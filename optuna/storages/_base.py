@@ -8,6 +8,7 @@ from typing import cast
 
 from optuna._typing import JSONSerializable
 from optuna.distributions import BaseDistribution
+from optuna.exceptions import UpdateFinishedTrialError
 from optuna.study._frozen import FrozenStudy
 from optuna.study._study_direction import StudyDirection
 from optuna.trial import FrozenTrial
@@ -71,7 +72,6 @@ class BaseStorage(abc.ABC):
             :exc:`optuna.exceptions.DuplicatedStudyError`:
                 If a study with the same ``study_name`` already exists.
         """
-        # TODO(ytsmiling) Fix RDB storage implementation to ensure unique `study_id`.
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -272,7 +272,7 @@ class BaseStorage(abc.ABC):
         Raises:
             :exc:`KeyError`:
                 If no trial with the matching ``trial_id`` exists.
-            :exc:`RuntimeError`:
+            :exc:`~optuna.exceptions.UpdateFinishedTrialError`:
                 If the trial is already finished.
         """
         raise NotImplementedError
@@ -295,11 +295,7 @@ class BaseStorage(abc.ABC):
         """
         trials = self.get_all_trials(study_id, deepcopy=False)
         if len(trials) <= trial_number:
-            raise KeyError(
-                "No trial with trial number {} exists in study with study_id {}.".format(
-                    trial_number, study_id
-                )
-            )
+            raise KeyError(f"No trial with {trial_number=} exists in study with {study_id=}.")
         return trials[trial_number]._trial_id
 
     def get_trial_number_from_id(self, trial_id: int) -> int:
@@ -369,7 +365,7 @@ class BaseStorage(abc.ABC):
         Raises:
             :exc:`KeyError`:
                 If no trial with the matching ``trial_id`` exists.
-            :exc:`RuntimeError`:
+            :exc:`~optuna.exceptions.UpdateFinishedTrialError`:
                 If the trial is already finished.
         """
         raise NotImplementedError
@@ -393,7 +389,7 @@ class BaseStorage(abc.ABC):
         Raises:
             :exc:`KeyError`:
                 If no trial with the matching ``trial_id`` exists.
-            :exc:`RuntimeError`:
+            :exc:`~optuna.exceptions.UpdateFinishedTrialError`:
                 If the trial is already finished.
         """
         raise NotImplementedError
@@ -415,7 +411,7 @@ class BaseStorage(abc.ABC):
         Raises:
             :exc:`KeyError`:
                 If no trial with the matching ``trial_id`` exists.
-            :exc:`RuntimeError`:
+            :exc:`~optuna.exceptions.UpdateFinishedTrialError`:
                 If the trial is already finished.
         """
         raise NotImplementedError
@@ -437,7 +433,7 @@ class BaseStorage(abc.ABC):
         Raises:
             :exc:`KeyError`:
                 If no trial with the matching ``trial_id`` exists.
-            :exc:`RuntimeError`:
+            :exc:`~optuna.exceptions.UpdateFinishedTrialError`:
                 If the trial is already finished.
         """
         raise NotImplementedError
@@ -559,7 +555,7 @@ class BaseStorage(abc.ABC):
                 ID of the trial.
 
         Returns:
-            Dictionary of a parameters. Keys are parameter names and values are internal
+            Dictionary of a parameters. Keys are parameter names and values are external
             representations of the parameter values.
 
         Raises:
@@ -615,11 +611,11 @@ class BaseStorage(abc.ABC):
                 Trial state to check.
 
         Raises:
-            :exc:`RuntimeError`:
+            :exc:`~optuna.exceptions.UpdateFinishedTrialError`:
                 If the trial is already finished.
         """
         if trial_state.is_finished():
             trial = self.get_trial(trial_id)
-            raise RuntimeError(
-                "Trial#{} has already finished and can not be updated.".format(trial.number)
+            raise UpdateFinishedTrialError(
+                f"Trial#{trial.number} has already finished and can not be updated."
             )

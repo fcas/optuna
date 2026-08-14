@@ -1,18 +1,24 @@
 from __future__ import annotations
 
+from collections import defaultdict
+from collections.abc import Callable
 from typing import Any
-from typing import Callable
 from typing import cast
 from typing import NamedTuple
+from typing import TYPE_CHECKING
 
 from optuna.distributions import CategoricalChoiceType
 from optuna.distributions import CategoricalDistribution
 from optuna.logging import get_logger
-from optuna.samplers._base import _CONSTRAINTS_KEY
-from optuna.study import Study
-from optuna.trial import FrozenTrial
 from optuna.trial import TrialState
 from optuna.visualization._plotly_imports import _imports
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from optuna.study import Study
+    from optuna.trial import FrozenTrial
 from optuna.visualization._utils import _check_plot_args
 from optuna.visualization._utils import _filter_nonfinite
 from optuna.visualization._utils import _is_log_scale
@@ -60,7 +66,7 @@ def _get_slice_subplot_info(
     if target is None:
 
         def _target(t: FrozenTrial) -> float:
-            return cast(float, t.value)
+            return cast("float", t.value)
 
         target = _target
 
@@ -81,8 +87,7 @@ def _get_slice_subplot_info(
         plot_info.x.append(t.params[param])
         plot_info.y.append(target(t))
         plot_info.trial_numbers.append(t.number)
-        constraints = t.system_attrs.get(_CONSTRAINTS_KEY)
-        plot_info.constraints.append(constraints is None or all([x <= 0.0 for x in constraints]))
+        plot_info.constraints.append(all(x <= 0.0 for x in t.constraints.values()))
 
     return plot_info
 
@@ -151,28 +156,6 @@ def plot_slice(
 
     Note that, if a parameter contains missing values, a trial with missing values is not plotted.
 
-    Example:
-
-        The following code snippet shows how to plot the parameter relationship as slice plot.
-
-        .. plotly::
-
-            import optuna
-
-
-            def objective(trial):
-                x = trial.suggest_float("x", -100, 100)
-                y = trial.suggest_categorical("y", [-1, 0, 1])
-                return x ** 2 + y
-
-
-            sampler = optuna.samplers.TPESampler(seed=10)
-            study = optuna.create_study(sampler=sampler)
-            study.optimize(objective, n_trials=10)
-
-            fig = optuna.visualization.plot_slice(study, params=["x", "y"])
-            fig.show()
-
     Args:
         study:
             A :class:`~optuna.study.Study` object whose trials are plotted for their target values.
@@ -206,7 +189,9 @@ def _get_slice_plot(info: _SlicePlotInfo) -> "go.Figure":
         figure.update_yaxes(title_text=info.target_name)
         if not info.subplots[0].is_numerical:
             figure.update_xaxes(
-                type="category", categoryorder="array", categoryarray=info.subplots[0].x_labels
+                type="category",
+                categoryorder="array",
+                categoryarray=_get_categorical_labels(info.subplots[0].x_labels),
             )
         elif info.subplots[0].is_log:
             figure.update_xaxes(type="log")
@@ -228,7 +213,7 @@ def _get_slice_plot(info: _SlicePlotInfo) -> "go.Figure":
                 figure.update_xaxes(
                     type="category",
                     categoryorder="array",
-                    categoryarray=subplot_info.x_labels,
+                    categoryarray=_get_categorical_labels(subplot_info.x_labels),
                     row=1,
                     col=column_index,
                 )
@@ -250,23 +235,35 @@ def _generate_slice_subplot(subplot_info: _SliceSubplotInfo) -> list[Scatter]:
     for x, y, num, c in zip(
         subplot_info.x, subplot_info.y, subplot_info.trial_numbers, subplot_info.constraints
     ):
-        if x is not None or x != "None" or y is not None or y != "None":
-            if c:
-                feasible.x.append(x)
-                feasible.y.append(y)
-                feasible.trial_numbers.append(num)
-            else:
-                infeasible.x.append(x)
-                infeasible.y.append(y)
+        if subplot_info.is_numerical and x is None:
+            continue
+        if c:
+            feasible.x.append(x)
+            feasible.y.append(y)
+            feasible.trial_numbers.append(num)
+        else:
+            infeasible.x.append(x)
+            infeasible.y.append(y)
+
+    if subplot_info.is_numerical:
+        feasible_x = feasible.x
+        feasible_y = feasible.y
+        feasible_c = feasible.trial_numbers
+        infeasible_x = infeasible.x
+        infeasible_y = infeasible.y
+    else:
+        feasible_x, feasible_y, feasible_c = _get_categorical_plot_values(subplot_info, feasible)
+        infeasible_x, infeasible_y, _ = _get_categorical_plot_values(subplot_info, infeasible)
+
     trace.append(
         go.Scatter(
-            x=feasible.x,
-            y=feasible.y,
+            x=feasible_x,
+            y=feasible_y,
             mode="markers",
             name="Feasible Trial",
             marker={
                 "line": {"width": 0.5, "color": "Grey"},
-                "color": feasible.trial_numbers,
+                "color": feasible_c,
                 "colorscale": COLOR_SCALE,
                 "colorbar": {
                     "title": "Trial",
@@ -277,11 +274,11 @@ def _generate_slice_subplot(subplot_info: _SliceSubplotInfo) -> list[Scatter]:
             showlegend=False,
         )
     )
-    if len(infeasible.x) > 0:
+    if len(infeasible_x) > 0:
         trace.append(
             go.Scatter(
-                x=infeasible.x,
-                y=infeasible.y,
+                x=infeasible_x,
+                y=infeasible_y,
                 mode="markers",
                 name="Infeasible Trial",
                 marker={
@@ -292,3 +289,29 @@ def _generate_slice_subplot(subplot_info: _SliceSubplotInfo) -> list[Scatter]:
         )
 
     return trace
+
+
+def _get_categorical_plot_values(
+    subplot_info: _SliceSubplotInfo, values: _PlotValues
+) -> tuple[list[Any], list[float], list[int]]:
+    assert subplot_info.x_labels is not None
+    value_x = []
+    value_y = []
+    value_c = []
+    points_dict = defaultdict(list)
+    for x, y, number in zip(values.x, values.y, values.trial_numbers):
+        points_dict[x].append((y, number))
+    for x_label in subplot_info.x_labels:
+        for y, number in points_dict[x_label]:
+            value_x.append(repr(x_label))
+            value_y.append(y)
+            value_c.append(number)
+    return value_x, value_y, value_c
+
+
+def _get_categorical_labels(
+    x_labels: tuple[CategoricalChoiceType, ...] | None,
+) -> list[str] | None:
+    if x_labels is None:
+        return None
+    return [repr(x_label) for x_label in x_labels]

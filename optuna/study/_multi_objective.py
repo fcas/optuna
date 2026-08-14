@@ -1,25 +1,19 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 import optuna
+from optuna.study._constrained_optimization import _get_feasible_trials
 from optuna.study._study_direction import StudyDirection
-from optuna.trial import FrozenTrial
 from optuna.trial import TrialState
 
 
-_CONSTRAINTS_KEY = "constraints"
-
-
-def _get_feasible_trials(trials: Sequence[FrozenTrial]) -> list[FrozenTrial]:
-    feasible_trials = []
-    for trial in trials:
-        constraints = trial.system_attrs.get(_CONSTRAINTS_KEY)
-        if constraints is None or all([x <= 0.0 for x in constraints]):
-            feasible_trials.append(trial)
-    return feasible_trials
+if TYPE_CHECKING:
+    from optuna.trial import FrozenTrial
 
 
 def _get_pareto_front_trials_by_trials(
@@ -60,19 +54,14 @@ def _fast_non_domination_rank(
     The fast non-dominated sort algorithm assigns a rank to each trial based on the dominance
     relationship of the trials, determined by the objective values and the penalty values. The
     algorithm is based on `the constrained NSGA-II algorithm
-    <https://doi.org/10.1109/4235.99601>`_, but the handling of the case when penalty
-    values are None is different. The algorithm assigns the rank according to the following
-    rules:
+    <https://doi.org/10.1109/4235.99601>`__. The algorithm assigns the rank according to the
+    following rules:
 
     1. Feasible trials: First, the algorithm assigns the rank to feasible trials, whose penalty
         values are less than or equal to 0, according to unconstrained version of fast non-
         dominated sort.
     2. Infeasible trials: Next, the algorithm assigns the rank from the minimum penalty value of to
         the maximum penalty value.
-    3. Trials with no penalty information (constraints value is None): Finally, The algorithm
-        assigns the rank to trials with no penalty information according to unconstrained version
-        of fast non-dominated sort. Note that only this step is different from the original
-        constrained NSGA-II algorithm.
     Plus, the algorithm terminates whenever the number of sorted trials reaches n_below.
 
     Args:
@@ -102,29 +91,21 @@ def _fast_non_domination_rank(
     if len(penalty) != len(loss_values):
         raise ValueError(
             "The length of penalty and loss_values must be same, but got "
-            f"len(penalty)={len(penalty)} and len(loss_values)={len(loss_values)}."
+            f"{len(penalty)=} and {len(loss_values)=}."
         )
 
     ranks = np.full(len(loss_values), -1, dtype=int)
-    is_penalty_nan = np.isnan(penalty)
-    is_feasible = np.logical_and(~is_penalty_nan, penalty <= 0)
-    is_infeasible = np.logical_and(~is_penalty_nan, penalty > 0)
+    is_feasible = penalty <= 0
+    is_infeasible = penalty > 0
 
     # First, we calculate the domination rank for feasible trials.
     ranks[is_feasible] = _calculate_nondomination_rank(loss_values[is_feasible], n_below=n_below)
-    n_below -= np.count_nonzero(is_feasible)
+    n_below -= int(np.count_nonzero(is_feasible))
 
     # Second, we calculate the domination rank for infeasible trials.
     top_rank_infeasible = np.max(ranks[is_feasible], initial=-1) + 1
     ranks[is_infeasible] = top_rank_infeasible + _calculate_nondomination_rank(
         penalty[is_infeasible][:, np.newaxis], n_below=n_below
-    )
-    n_below -= np.count_nonzero(is_infeasible)
-
-    # Third, we calculate the domination rank for trials with no penalty information.
-    top_rank_penalty_nan = np.max(ranks[~is_penalty_nan], initial=-1) + 1
-    ranks[is_penalty_nan] = top_rank_penalty_nan + _calculate_nondomination_rank(
-        loss_values[is_penalty_nan], n_below=n_below
     )
     assert np.all(ranks != -1), "All the rank must be updated."
     return ranks
@@ -133,18 +114,23 @@ def _fast_non_domination_rank(
 def _is_pareto_front_nd(unique_lexsorted_loss_values: np.ndarray) -> np.ndarray:
     # NOTE(nabenabe0928): I tried the Kung's algorithm below, but it was not really quick.
     # https://github.com/optuna/optuna/pull/5302#issuecomment-1988665532
-    loss_values = unique_lexsorted_loss_values.copy()
+    # As unique_lexsorted_loss_values[:, 0] is sorted, we do not need it to judge dominance.
+    loss_values = unique_lexsorted_loss_values[:, 1:]
     n_trials = loss_values.shape[0]
     on_front = np.zeros(n_trials, dtype=bool)
-    nondominated_indices = np.arange(n_trials)
-    while len(loss_values):
-        # The following judges `np.any(loss_values[i] < loss_values[0])` for each `i`.
-        nondominated_and_not_top = np.any(loss_values < loss_values[0], axis=1)
+    remaining_indices: np.ndarray[tuple[int], np.dtype[np.signedinteger]] = np.arange(n_trials)
+    # NOTE(nabenabe): Please check `_compute_exclusive_hv` in wfg.py when you modify this function.
+    while len(remaining_indices):
         # NOTE: trials[j] cannot dominate trials[i] for i < j because of lexsort.
-        # Therefore, nondominated_indices[0] is always non-dominated.
-        on_front[nondominated_indices[0]] = True
-        loss_values = loss_values[nondominated_and_not_top]
-        nondominated_indices = nondominated_indices[nondominated_and_not_top]
+        # Therefore, remaining_indices[0] is always non-dominated.
+        on_front[(new_nondominated_index := remaining_indices[0])] = True
+        nondominated_and_not_top = np.any(
+            loss_values[remaining_indices] < loss_values[new_nondominated_index], axis=1
+        )
+        remaining_indices = cast(
+            "np.ndarray[tuple[int], np.dtype[np.signedinteger]]",
+            remaining_indices[nondominated_and_not_top],
+        )
 
     return on_front
 
@@ -169,13 +155,20 @@ def _is_pareto_front_for_unique_sorted(unique_lexsorted_loss_values: np.ndarray)
         return _is_pareto_front_nd(unique_lexsorted_loss_values)
 
 
-def _is_pareto_front(loss_values: np.ndarray, assume_unique_lexsorted: bool = True) -> np.ndarray:
+def _is_pareto_front(loss_values: np.ndarray, assume_unique_lexsorted: bool) -> np.ndarray:
+    # NOTE(nabenabe): If assume_unique_lexsorted=True, but loss_values is not a unique array,
+    # Duplicated Pareto solutions will be filtered out except for the earliest occurrences.
+    # If assume_unique_lexsorted=True and loss_values[:, 0] is not sorted, then the result will be
+    # incorrect.
     if assume_unique_lexsorted:
         return _is_pareto_front_for_unique_sorted(loss_values)
 
     unique_lexsorted_loss_values, order_inv = np.unique(loss_values, axis=0, return_inverse=True)
     on_front = _is_pareto_front_for_unique_sorted(unique_lexsorted_loss_values)
-    return on_front[order_inv]
+    # NOTE(nabenabe): We can remove `.reshape(-1)` if ``numpy==2.0.0`` is not used.
+    # https://github.com/numpy/numpy/issues/26738
+    # TODO: Remove `.reshape(-1)` once `numpy==2.0.0` is obsolete.
+    return on_front[order_inv.reshape(-1)]
 
 
 def _calculate_nondomination_rank(
@@ -199,7 +192,7 @@ def _calculate_nondomination_rank(
     rank = 0
     indices = np.arange(n_unique)
     while n_unique - indices.size < n_below:
-        on_front = _is_pareto_front(unique_lexsorted_loss_values)
+        on_front = _is_pareto_front(unique_lexsorted_loss_values, assume_unique_lexsorted=True)
         ranks[indices[on_front]] = rank
         # Remove the recent Pareto solutions.
         indices = indices[~on_front]
@@ -207,7 +200,10 @@ def _calculate_nondomination_rank(
         rank += 1
 
     ranks[indices] = rank  # Rank worse than the top n_below is defined as the worst rank.
-    return ranks[order_inv]
+    # NOTE(nabenabe): We can remove `.reshape(-1)` if ``numpy==2.0.0`` is not used.
+    # https://github.com/numpy/numpy/issues/26738
+    # TODO: Remove `.reshape(-1)` once `numpy==2.0.0` is obsolete.
+    return ranks[order_inv.reshape(-1)]
 
 
 def _dominates(

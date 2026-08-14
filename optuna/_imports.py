@@ -1,10 +1,18 @@
+from __future__ import annotations
+
 import importlib
 import types
-from types import TracebackType
 from typing import Any
-from typing import Optional
-from typing import Tuple
-from typing import Type
+from typing import TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from types import TracebackType
+
+_INTEGRATION_IMPORT_ERROR_TEMPLATE = (
+    "\nCould not find `optuna-integration` for `{0}`.\n"
+    "Please run `pip install optuna-integration[{0}]`."
+)
 
 
 class _DeferredImportExceptionContextManager:
@@ -16,7 +24,7 @@ class _DeferredImportExceptionContextManager:
     """
 
     def __init__(self) -> None:
-        self._deferred: Optional[Tuple[Exception, str]] = None
+        self._deferred: tuple[Exception, str] | None = None
 
     def __enter__(self) -> "_DeferredImportExceptionContextManager":
         """Enter the context manager.
@@ -29,10 +37,10 @@ class _DeferredImportExceptionContextManager:
 
     def __exit__(
         self,
-        exc_type: Optional[Type[Exception]],
-        exc_value: Optional[Exception],
-        traceback: Optional[TracebackType],
-    ) -> Optional[bool]:
+        exc_type: type[Exception] | None,
+        exc_value: Exception | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
         """Exit the context manager.
 
         Args:
@@ -51,15 +59,16 @@ class _DeferredImportExceptionContextManager:
         if isinstance(exc_value, (ImportError, SyntaxError)):
             if isinstance(exc_value, ImportError):
                 message = (
-                    "Tried to import '{}' but failed. Please make sure that the package is "
-                    "installed correctly to use this feature. Actual error: {}."
-                ).format(exc_value.name, exc_value)
+                    f"Tried to import '{exc_value.name}' but failed. Please make sure that the "
+                    "package is installed correctly to use this feature. Actual error: "
+                    f"{exc_value}."
+                )
             elif isinstance(exc_value, SyntaxError):
                 message = (
-                    "Tried to import a package but failed due to a syntax error in {}. Please "
-                    "make sure that the Python version is correct to use this feature. Actual "
-                    "error: {}."
-                ).format(exc_value.filename, exc_value)
+                    f"Tried to import a package but failed due to a syntax error in "
+                    f"{exc_value.filename}. Please make sure that the Python version is correct "
+                    f"to use this feature. Actual error: {exc_value}."
+                )
             else:
                 assert False
 
@@ -107,6 +116,8 @@ class _LazyImport(types.ModuleType):
     dependencies even if not required.
     Within this project's usage, importlib override this module's attribute on the first
     access and the imported submodule is directly accessed from the second access.
+
+    TODO: Eliminate lazy import after Python 3.14 is dropped. https://peps.python.org/pep-0810/
 
     Args:
         name: Name of module to apply lazy import.

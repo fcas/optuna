@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from optuna._experimental import experimental_func
 from optuna.distributions import CategoricalDistribution
 from optuna.distributions import FloatDistribution
 from optuna.distributions import IntDistribution
-from optuna.trial import FrozenTrial
 from optuna.visualization.matplotlib import _matplotlib_imports
+
+
+if TYPE_CHECKING:
+    from optuna.trial import FrozenTrial
 
 
 __all__ = ["is_available"]

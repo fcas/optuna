@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-import warnings
 
 import numpy as np
 
-import optuna
 from optuna._experimental import experimental_class
+from optuna._warnings import optuna_warn
 from optuna.pruners import BasePruner
 from optuna.study._study_direction import StudyDirection
-from optuna.trial import FrozenTrial
 
 
 if TYPE_CHECKING:
+    from typing import Literal
+
     import scipy.stats as ss
+
+    import optuna
+    from optuna.trial import FrozenTrial
 else:
     from optuna._imports import _LazyImport
 
@@ -22,7 +25,7 @@ else:
 
 @experimental_class("3.6.0")
 class WilcoxonPruner(BasePruner):
-    """Pruner based on the `Wilcoxon signed-rank test <https://en.wikipedia.org/w/index.php?title=Wilcoxon_signed-rank_test&oldid=1195011212>`_.
+    """Pruner based on the `Wilcoxon signed-rank test <https://en.wikipedia.org/w/index.php?title=Wilcoxon_signed-rank_test&oldid=1195011212>`__.
 
     This pruner performs the Wilcoxon signed-rank test between the current trial and the current best trial,
     and stops whenever the pruner is sure up to a given p-value that the current trial is worse than the best one.
@@ -45,6 +48,10 @@ class WilcoxonPruner(BasePruner):
 
     .. seealso::
         Please refer to :meth:`~optuna.trial.Trial.report`.
+
+    .. note::
+        This sampler requires ``scipy``.
+        You can install these dependencies with ``pip install scipy``.
 
     Example:
 
@@ -128,16 +135,17 @@ class WilcoxonPruner(BasePruner):
             Pruning starts only after you have ``n_startup_steps`` steps of
             available observations for comparison between the current trial
             and the best trial.
-            Defaults to 0 (pruning kicks in from the very first step).
+            Defaults to 2. Note that the trial is not pruned at the first and second steps even if
+            the `n_startup_steps` is set to 0 or 1 due to the lack of enough data for comparison.
     """  # NOQA: E501
 
     def __init__(
         self,
         *,
         p_threshold: float = 0.1,
-        n_startup_steps: int = 0,
+        n_startup_steps: int = 2,
     ) -> None:
-        if n_startup_steps < 0:
+        if n_startup_steps < 0:  # TODO: Consider changing the RHS to 2.
             raise ValueError(f"n_startup_steps must be nonnegative but got {n_startup_steps}.")
         if not 0.0 <= p_threshold <= 1.0:
             raise ValueError(f"p_threshold must be between 0 and 1 but got {p_threshold}.")
@@ -152,7 +160,7 @@ class WilcoxonPruner(BasePruner):
         steps, step_values = np.array(list(trial.intermediate_values.items())).T
 
         if np.any(~np.isfinite(step_values)):
-            warnings.warn(
+            optuna_warn(
                 f"The intermediate values of the current trial (trial {trial.number}) "
                 f"contain infinity/NaNs. WilcoxonPruner will not prune this trial."
             )
@@ -164,7 +172,7 @@ class WilcoxonPruner(BasePruner):
             return False
 
         if len(best_trial.intermediate_values) == 0:
-            warnings.warn(
+            optuna_warn(
                 "The best trial has no intermediate values so WilcoxonPruner cannot prune trials. "
                 "If you have added the best trial with Study.add_trial, please consider setting "
                 "intermediate_values argument."
@@ -174,7 +182,7 @@ class WilcoxonPruner(BasePruner):
         best_steps, best_step_values = np.array(list(best_trial.intermediate_values.items())).T
 
         if np.any(~np.isfinite(best_step_values)):
-            warnings.warn(
+            optuna_warn(
                 f"The intermediate values of the best trial (trial {best_trial.number}) "
                 f"contain infinity/NaNs. WilcoxonPruner will not prune the current trial."
             )
@@ -185,7 +193,7 @@ class WilcoxonPruner(BasePruner):
         if len(idx1) < len(step_values):
             # This if-statement is never satisfied if following "average_is_best" safety works,
             # because the safety ensures that the best trial always has the all steps.
-            warnings.warn(
+            optuna_warn(
                 "WilcoxonPruner finds steps existing in the current trial "
                 "but does not exist in the best trial. "
                 "Those values are ignored."
@@ -193,9 +201,10 @@ class WilcoxonPruner(BasePruner):
 
         diff_values = step_values[idx1] - best_step_values[idx2]
 
-        if len(diff_values) < self._n_startup_steps:
+        if len(diff_values) < max(2, self._n_startup_steps):
             return False
 
+        alt: Literal["less", "greater"]
         if study.direction == StudyDirection.MAXIMIZE:
             alt = "less"
             average_is_best = sum(best_step_values) / len(best_step_values) <= sum(
@@ -216,4 +225,6 @@ class WilcoxonPruner(BasePruner):
             # the average of the current trial's intermediate values.
             # For safety, WilcoxonPruner concludes not to prune it for now.
             return False
-        return p < self._p_threshold
+
+        # convert the `np.bool_` to a `builtins.bool`
+        return bool(p < self._p_threshold)

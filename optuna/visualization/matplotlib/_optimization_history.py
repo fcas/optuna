@@ -1,18 +1,23 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from optuna._experimental import experimental_func
 from optuna.logging import get_logger
-from optuna.study import Study
-from optuna.trial import FrozenTrial
 from optuna.visualization._optimization_history import _get_optimization_history_info_list
 from optuna.visualization._optimization_history import _OptimizationHistoryInfo
 from optuna.visualization._optimization_history import _ValueState
 from optuna.visualization.matplotlib._matplotlib_imports import _imports
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from collections.abc import Sequence
+
+    from optuna.study import Study
+    from optuna.trial import FrozenTrial
 
 
 if _imports.is_successful():
@@ -35,31 +40,6 @@ def plot_optimization_history(
     .. seealso::
         Please refer to :func:`optuna.visualization.plot_optimization_history` for an example.
 
-    Example:
-
-        The following code snippet shows how to plot optimization history.
-
-        .. plot::
-
-            import optuna
-            import matplotlib.pyplot as plt
-
-
-            def objective(trial):
-                x = trial.suggest_float("x", -100, 100)
-                y = trial.suggest_categorical("y", [-1, 0, 1])
-                return x ** 2 + y
-
-            sampler = optuna.samplers.TPESampler(seed=10)
-            study = optuna.create_study(sampler=sampler)
-            study.optimize(objective, n_trials=10)
-
-            optuna.visualization.matplotlib.plot_optimization_history(study)
-            plt.tight_layout()
-
-        .. note::
-            You need to adjust the size of the plot by yourself using ``plt.tight_layout()`` or
-            ``plt.savefig(IMAGE_NAME, bbox_inches='tight')``.
     Args:
         study:
             A :class:`~optuna.study.Study` object whose trials are plotted for their target values.
@@ -93,7 +73,7 @@ def _get_optimization_history_plot(
 ) -> "Axes":
     # Set up the graph style.
     plt.style.use("ggplot")  # Use ggplot style sheet for similar outputs to plotly.
-    _, ax = plt.subplots()
+    _, ax = plt.subplots(tight_layout=True)
     ax.set_title("Optimization History Plot")
     ax.set_xlabel("Trial")
     ax.set_ylabel(target_name)

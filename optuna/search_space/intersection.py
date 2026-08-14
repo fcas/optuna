@@ -1,24 +1,22 @@
 from __future__ import annotations
 
 import copy
-from typing import Dict
-from typing import Tuple
 from typing import TYPE_CHECKING
 
 import optuna
-from optuna.distributions import BaseDistribution
 
 
 if TYPE_CHECKING:
+    from optuna.distributions import BaseDistribution
     from optuna.study import Study
 
 
 def _calculate(
     trials: list[optuna.trial.FrozenTrial],
     include_pruned: bool = False,
-    search_space: Dict[str, BaseDistribution] | None = None,
+    search_space: dict[str, BaseDistribution] | None = None,
     cached_trial_number: int = -1,
-) -> Tuple[Dict[str, BaseDistribution] | None, int]:
+) -> tuple[dict[str, BaseDistribution] | None, int]:
     states_of_interest = [
         optuna.trial.TrialState.COMPLETE,
         optuna.trial.TrialState.WAITING,
@@ -28,12 +26,15 @@ def _calculate(
     if include_pruned:
         states_of_interest.append(optuna.trial.TrialState.PRUNED)
 
-    trials_of_interest = [trial for trial in trials if trial.state in states_of_interest]
+    next_cached_trial_number = -1
 
-    next_cached_trial_number = (
-        trials_of_interest[-1].number + 1 if len(trials_of_interest) > 0 else -1
-    )
-    for trial in reversed(trials_of_interest):
+    for trial in reversed(trials):
+        if trial.state not in states_of_interest:
+            continue
+
+        if next_cached_trial_number == -1:
+            next_cached_trial_number = trial.number + 1
+
         if cached_trial_number > trial.number:
             break
 
@@ -75,18 +76,20 @@ class IntersectionSearchSpace:
 
     def __init__(self, include_pruned: bool = False) -> None:
         self._cached_trial_number: int = -1
-        self._search_space: Dict[str, BaseDistribution] | None = None
+        self._search_space: dict[str, BaseDistribution] | None = None
         self._study_id: int | None = None
 
         self._include_pruned = include_pruned
 
-    def calculate(self, study: Study) -> Dict[str, BaseDistribution]:
+    def calculate(self, study: Study, use_cache: bool = False) -> dict[str, BaseDistribution]:
         """Returns the intersection search space of the :class:`~optuna.study.Study`.
 
         Args:
             study:
                 A study with completed trials. The same study must be passed for one instance
                 of this class through its lifetime.
+            use_cache:
+                An option to use cached trials for each trial.
 
         Returns:
             A dictionary containing the parameter names and parameter's distributions sorted by
@@ -96,13 +99,15 @@ class IntersectionSearchSpace:
         if self._study_id is None:
             self._study_id = study._study_id
         else:
-            # Note that the check below is meaningless when `InMemoryStorage` is used
-            # because `InMemoryStorage.create_new_study` always returns the same study ID.
+            # Note that the check below is meaningless when
+            # :class:`~optuna.storages.InMemoryStorage` is used because
+            # :func:`~optuna.storages.InMemoryStorage.create_new_study`
+            # always returns the same study ID.
             if self._study_id != study._study_id:
                 raise ValueError("`IntersectionSearchSpace` cannot handle multiple studies.")
 
         self._search_space, self._cached_trial_number = _calculate(
-            study.get_trials(deepcopy=False),
+            study._get_trials(deepcopy=False, use_cache=use_cache),
             self._include_pruned,
             self._search_space,
             self._cached_trial_number,
@@ -115,7 +120,7 @@ class IntersectionSearchSpace:
 def intersection_search_space(
     trials: list[optuna.trial.FrozenTrial],
     include_pruned: bool = False,
-) -> Dict[str, BaseDistribution]:
+) -> dict[str, BaseDistribution]:
     """Return the intersection search space of the given trials.
 
     Intersection search space contains the intersection of parameter distributions that have been

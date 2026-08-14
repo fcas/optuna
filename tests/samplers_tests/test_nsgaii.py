@@ -21,10 +21,11 @@ from optuna.distributions import FloatDistribution
 from optuna.distributions import IntDistribution
 from optuna.samplers import BaseSampler
 from optuna.samplers import NSGAIISampler
-from optuna.samplers._base import _CONSTRAINTS_KEY
 from optuna.samplers._lazy_random_state import LazyRandomState
 from optuna.samplers.nsgaii import BaseCrossover
+from optuna.samplers.nsgaii import BaseMutation
 from optuna.samplers.nsgaii import BLXAlphaCrossover
+from optuna.samplers.nsgaii import PolynomialMutation
 from optuna.samplers.nsgaii import SBXCrossover
 from optuna.samplers.nsgaii import SPXCrossover
 from optuna.samplers.nsgaii import UNDXCrossover
@@ -35,13 +36,13 @@ from optuna.samplers.nsgaii._child_generation_strategy import NSGAIIChildGenerat
 from optuna.samplers.nsgaii._constraints_evaluation import _constrained_dominates
 from optuna.samplers.nsgaii._constraints_evaluation import _validate_constraints
 from optuna.samplers.nsgaii._crossover import _inlined_categorical_uniform_crossover
-from optuna.samplers.nsgaii._elite_population_selection_strategy import (
-    NSGAIIElitePopulationSelectionStrategy,
-)
 from optuna.samplers.nsgaii._elite_population_selection_strategy import _calc_crowding_distance
 from optuna.samplers.nsgaii._elite_population_selection_strategy import _crowding_distance_sort
 from optuna.samplers.nsgaii._elite_population_selection_strategy import _rank_population
-from optuna.samplers.nsgaii._sampler import _GENERATION_KEY
+from optuna.samplers.nsgaii._elite_population_selection_strategy import (
+    NSGAIIElitePopulationSelectionStrategy,
+)
+from optuna.samplers.nsgaii._mutation import perform_mutation
 from optuna.study._multi_objective import _dominates
 from optuna.study._study_direction import StudyDirection
 from optuna.testing.trials import _create_frozen_trial
@@ -55,6 +56,10 @@ def _nan_equal(a: Any, b: Any) -> bool:
     return a == b
 
 
+def test_generation_key_name() -> None:
+    assert NSGAIISampler._GENERATION_KEY == "NSGAIISampler:generation"
+
+
 def test_population_size() -> None:
     # Set `population_size` to 10.
     sampler = NSGAIISampler(population_size=10)
@@ -62,9 +67,7 @@ def test_population_size() -> None:
     study = optuna.create_study(directions=["minimize"], sampler=sampler)
     study.optimize(lambda t: [t.suggest_float("x", 0, 9)], n_trials=40)
 
-    generations = Counter(
-        [t.system_attrs[optuna.samplers.nsgaii._sampler._GENERATION_KEY] for t in study.trials]
-    )
+    generations = Counter([t.system_attrs[NSGAIISampler._GENERATION_KEY] for t in study.trials])
     assert generations == {0: 10, 1: 10, 2: 10, 3: 10}
 
     # Set `population_size` to 2.
@@ -73,9 +76,7 @@ def test_population_size() -> None:
     study = optuna.create_study(directions=["minimize"], sampler=sampler)
     study.optimize(lambda t: [t.suggest_float("x", 0, 9)], n_trials=40)
 
-    generations = Counter(
-        [t.system_attrs[optuna.samplers.nsgaii._sampler._GENERATION_KEY] for t in study.trials]
-    )
+    generations = Counter([t.system_attrs[NSGAIISampler._GENERATION_KEY] for t in study.trials])
     assert generations == {i: 2 for i in range(20)}
 
     # Invalid population size.
@@ -157,12 +158,13 @@ def test_constraints_func_none() -> None:
 
     study = optuna.create_study(directions=["minimize"] * n_objectives, sampler=sampler)
     study.optimize(
-        lambda t: [t.suggest_float(f"x{i}", 0, 1) for i in range(n_objectives)], n_trials=n_trials
+        lambda t: [t.suggest_float(f"x{i}", 0, 1) for i in range(n_objectives)],
+        n_trials=n_trials,
     )
 
     assert len(study.trials) == n_trials
     for trial in study.trials:
-        assert _CONSTRAINTS_KEY not in trial.system_attrs
+        assert len(trial.constraints) == 0
 
 
 @pytest.mark.parametrize("constraint_value", [-1.0, 0.0, 1.0, -float("inf"), float("inf")])
@@ -178,18 +180,19 @@ def test_constraints_func(constraint_value: float) -> None:
         return (constraint_value + trial.number,)
 
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore", optuna.exceptions.ExperimentalWarning)
+        warnings.simplefilter("ignore", FutureWarning)
         sampler = NSGAIISampler(population_size=2, constraints_func=constraints_func)
 
     study = optuna.create_study(directions=["minimize"] * n_objectives, sampler=sampler)
     study.optimize(
-        lambda t: [t.suggest_float(f"x{i}", 0, 1) for i in range(n_objectives)], n_trials=n_trials
+        lambda t: [t.suggest_float(f"x{i}", 0, 1) for i in range(n_objectives)],
+        n_trials=n_trials,
     )
 
     assert len(study.trials) == n_trials
     assert constraints_func_call_count == n_trials
     for trial in study.trials:
-        for x, y in zip(trial.system_attrs[_CONSTRAINTS_KEY], (constraint_value + trial.number,)):
+        for x, y in zip(trial.constraints.values(), (constraint_value + trial.number,)):
             assert x == y
 
 
@@ -201,7 +204,7 @@ def test_constraints_func_nan() -> None:
         return (float("nan"),)
 
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore", optuna.exceptions.ExperimentalWarning)
+        warnings.simplefilter("ignore", FutureWarning)
         sampler = NSGAIISampler(population_size=2, constraints_func=constraints_func)
 
     study = optuna.create_study(directions=["minimize"] * n_objectives, sampler=sampler)
@@ -215,7 +218,25 @@ def test_constraints_func_nan() -> None:
     assert len(trials) == 1  # The error stops optimization, but completed trials are recorded.
     assert all(0 <= x <= 1 for x in trials[0].params.values())  # The params are normal.
     assert trials[0].values == list(trials[0].params.values())  # The values are normal.
-    assert trials[0].system_attrs[_CONSTRAINTS_KEY] is None  # None is set for constraints.
+    assert len(trials[0].constraints) == 0  # No constraints are set.
+
+
+def test_set_constraint_with_different_keys() -> None:
+    n_trials = 8
+
+    def objective(trial: optuna.Trial) -> Sequence[float]:
+        x = trial.suggest_float("x", 0, 1)
+        y = trial.suggest_float("y", 0, 1)
+        if trial.number % 3 == 1:
+            trial.set_constraint("a", x - 0.5)
+        elif trial.number % 3 == 2:
+            trial.set_constraint("b", y - 0.5)
+            trial.set_constraint("c", x + y - 1)
+        return x, y
+
+    sampler = NSGAIISampler(population_size=2)
+    study = optuna.create_study(directions=["minimize", "minimize"], sampler=sampler)
+    study.optimize(objective, n_trials=n_trials)
 
 
 @pytest.mark.parametrize("direction1", [StudyDirection.MINIMIZE, StudyDirection.MAXIMIZE])
@@ -231,7 +252,9 @@ def test_constraints_func_nan() -> None:
     ],
 )
 def test_constrained_dominates_feasible_vs_feasible(
-    direction1: StudyDirection, direction2: StudyDirection, constraints_list: list[list[float]]
+    direction1: StudyDirection,
+    direction2: StudyDirection,
+    constraints_list: list[list[float]],
 ) -> None:
     directions = [direction1, direction2]
     # Check all pairs of trials consisting of these values, i.e.,
@@ -288,7 +311,9 @@ def test_constrained_dominates_feasible_vs_infeasible(
 
 
 @pytest.mark.parametrize("direction", [StudyDirection.MINIMIZE, StudyDirection.MAXIMIZE])
-def test_constrained_dominates_infeasible_vs_infeasible(direction: StudyDirection) -> None:
+def test_constrained_dominates_infeasible_vs_infeasible(
+    direction: StudyDirection,
+) -> None:
     inf = float("inf")
     directions = [direction]
 
@@ -362,6 +387,52 @@ def test_constrained_dominates_infeasible_vs_infeasible(direction: StudyDirectio
                 assert not _constrained_dominates(t2, t1, directions)
 
 
+def _create_frozen_trial_with_keyed_constraints(
+    number: int, values: Sequence[float], constraints: dict[str, float]
+) -> FrozenTrial:
+    trial = _create_frozen_trial(number=number, values=values)
+    for key, value in constraints.items():
+        trial.set_constraint(key, value)
+    return trial
+
+
+@pytest.mark.parametrize("direction", [StudyDirection.MINIMIZE, StudyDirection.MAXIMIZE])
+def test_constrained_dominates_different_constraint_keys(direction: StudyDirection) -> None:
+    directions = [direction]
+
+    # A feasible trial dominates an infeasible trial even if their constraint keys differ,
+    # regardless of the values.
+    for values1, values2 in [([0], [1]), ([1], [0])]:
+        t1 = _create_frozen_trial_with_keyed_constraints(0, values1, {"a": -1})
+        t2 = _create_frozen_trial_with_keyed_constraints(1, values2, {"b": 1})
+        assert _constrained_dominates(t1, t2, directions)
+        assert not _constrained_dominates(t2, t1, directions)
+
+        # A trial without constraints is treated as feasible.
+        t1 = _create_frozen_trial(number=0, values=values1)
+        t2 = _create_frozen_trial_with_keyed_constraints(1, values2, {"b": 1})
+        assert _constrained_dominates(t1, t2, directions)
+        assert not _constrained_dominates(t2, t1, directions)
+
+    # When both trials are feasible, the domination is determined by the values.
+    t1 = _create_frozen_trial_with_keyed_constraints(0, [0], {"a": -1})
+    t2 = _create_frozen_trial_with_keyed_constraints(1, [1], {"b": -1, "c": 0})
+    if direction == StudyDirection.MINIMIZE:
+        better, worse = t1, t2
+    else:
+        better, worse = t2, t1
+    assert _constrained_dominates(better, worse, directions)
+    assert not _constrained_dominates(worse, better, directions)
+
+    # When both trials are infeasible, the trial with the smaller total violation dominates
+    # the other, regardless of the values.
+    for values1, values2 in [([0], [1]), ([1], [0])]:
+        t1 = _create_frozen_trial_with_keyed_constraints(0, values1, {"a": 1})
+        t2 = _create_frozen_trial_with_keyed_constraints(1, values2, {"b": 1, "c": 1})
+        assert _constrained_dominates(t1, t2, directions)
+        assert not _constrained_dominates(t2, t1, directions)
+
+
 def _assert_population_per_rank(
     trials: list[FrozenTrial],
     direction: list[StudyDirection],
@@ -371,21 +442,19 @@ def _assert_population_per_rank(
     flattened = [trial for rank in population_per_rank for trial in rank]
     assert len(flattened) == len(trials)
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        # Check that the trials in the same rank do not dominate each other.
-        for i in range(len(population_per_rank)):
-            for trial1 in population_per_rank[i]:
-                for trial2 in population_per_rank[i]:
-                    assert not _constrained_dominates(trial1, trial2, direction)
+    # Check that the trials in the same rank do not dominate each other.
+    for i in range(len(population_per_rank)):
+        for trial1 in population_per_rank[i]:
+            for trial2 in population_per_rank[i]:
+                assert not _constrained_dominates(trial1, trial2, direction)
 
-        # Check that each trial is dominated by some trial in the rank above.
-        for i in range(len(population_per_rank) - 1):
-            for trial2 in population_per_rank[i + 1]:
-                assert any(
-                    _constrained_dominates(trial1, trial2, direction)
-                    for trial1 in population_per_rank[i]
-                )
+    # Check that each trial is dominated by some trial in the rank above.
+    for i in range(len(population_per_rank) - 1):
+        for trial2 in population_per_rank[i + 1]:
+            assert any(
+                _constrained_dominates(trial1, trial2, direction)
+                for trial1 in population_per_rank[i]
+            )
 
 
 @pytest.mark.parametrize("direction1", [StudyDirection.MINIMIZE, StudyDirection.MAXIMIZE])
@@ -426,47 +495,6 @@ def test_validate_constraints() -> None:
             is_constrained=True,
         )
 
-    # Different numbers of constraints are not allowed.
-    with pytest.raises(ValueError):
-        _validate_constraints(
-            [
-                _create_frozen_trial(number=0, values=[1], constraints=[0]),
-                _create_frozen_trial(number=1, values=[1], constraints=[0, 1]),
-            ],
-            is_constrained=True,
-        )
-
-
-@pytest.mark.parametrize(
-    "values_and_constraints",
-    [
-        [([10], None), ([20], None), ([20], [0]), ([20], [1]), ([30], [-1])],
-        [
-            ([50, 30], None),
-            ([30, 50], None),
-            ([20, 20], [3, 3]),
-            ([30, 10], [0, -1]),
-            ([15, 15], [4, 4]),
-        ],
-    ],
-)
-def test_rank_population_missing_constraint_values(
-    values_and_constraints: list[tuple[list[float], list[float]]]
-) -> None:
-    values_dim = len(values_and_constraints[0][0])
-    for directions in itertools.product(
-        [StudyDirection.MINIMIZE, StudyDirection.MAXIMIZE], repeat=values_dim
-    ):
-        trials = [
-            _create_frozen_trial(number=i, values=v, constraints=c)
-            for i, (v, c) in enumerate(values_and_constraints)
-        ]
-
-        with pytest.warns(UserWarning):
-            _validate_constraints(trials, is_constrained=True)
-        population_per_rank = _rank_population(trials, list(directions), is_constrained=True)
-        _assert_population_per_rank(trials, list(directions), population_per_rank)
-
 
 @pytest.mark.parametrize("n_dims", [1, 2, 3])
 def test_rank_population_empty(n_dims: int) -> None:
@@ -501,7 +529,15 @@ def test_rank_population_empty(n_dims: int) -> None:
         ([[-float("inf")], [-float("inf")], [-float("inf")]], [0, 0, 0]),
         ([[-float("inf")], [float("inf")]], [float("inf"), float("inf")]),
         (
-            [[-float("inf")], [-float("inf")], [-float("inf")], [0], [1], [2], [float("inf")]],
+            [
+                [-float("inf")],
+                [-float("inf")],
+                [-float("inf")],
+                [0],
+                [1],
+                [2],
+                [float("inf")],
+            ],
             [0, 0, float("inf"), float("inf"), 1, float("inf"), float("inf")],
         ),
     ],
@@ -532,39 +568,8 @@ def test_crowding_distance_sort(values: list[list[float]]) -> None:
     assert sorted_dist == sorted(sorted_dist, reverse=True)
 
 
-def test_study_system_attr_for_population_cache() -> None:
-    sampler = NSGAIISampler(population_size=10)
-    study = optuna.create_study(directions=["minimize"], sampler=sampler)
-
-    def get_cached_entries(
-        study: optuna.study.Study,
-    ) -> list[tuple[int, list[int]]]:
-        study_system_attrs = study._storage.get_study_system_attrs(study._study_id)
-        return [
-            v
-            for k, v in study_system_attrs.items()
-            if k.startswith(optuna.samplers.nsgaii._sampler._POPULATION_CACHE_KEY_PREFIX)
-        ]
-
-    study.optimize(lambda t: [t.suggest_float("x", 0, 9)], n_trials=10)
-    cached_entries = get_cached_entries(study)
-    assert len(cached_entries) == 0
-
-    study.optimize(lambda t: [t.suggest_float("x", 0, 9)], n_trials=1)
-    cached_entries = get_cached_entries(study)
-    assert len(cached_entries) == 1
-    assert cached_entries[0][0] == 0  # Cached generation.
-    assert len(cached_entries[0][1]) == 10  # Population size.
-
-    study.optimize(lambda t: [t.suggest_float("x", 0, 9)], n_trials=10)
-    cached_entries = get_cached_entries(study)
-    assert len(cached_entries) == 1
-    assert cached_entries[0][0] == 1  # Cached generation.
-    assert len(cached_entries[0][1]) == 10  # Population size.
-
-
-def test_constraints_func_experimental_warning() -> None:
-    with pytest.warns(optuna.exceptions.ExperimentalWarning):
+def test_constraints_func_deprecation_warning() -> None:
+    with pytest.warns(FutureWarning):
         NSGAIISampler(constraints_func=lambda _: [0])
 
 
@@ -624,18 +629,20 @@ def test_elite_population_selection_strategy_result(
 
 
 @pytest.mark.parametrize(
-    "mutation_prob,crossover,crossover_prob,swapping_prob",
+    "mutation,mutation_prob,crossover,crossover_prob,swapping_prob",
     [
-        (1.2, UniformCrossover(), 0.9, 0.5),
-        (-0.2, UniformCrossover(), 0.9, 0.5),
-        (None, UniformCrossover(), 1.2, 0.5),
-        (None, UniformCrossover(), -0.2, 0.5),
-        (None, UniformCrossover(), 0.9, 1.2),
-        (None, UniformCrossover(), 0.9, -0.2),
-        (None, 3, 0.9, 0.5),
+        (None, 1.2, UniformCrossover(), 0.9, 0.5),
+        (None, -0.2, UniformCrossover(), 0.9, 0.5),
+        (None, None, UniformCrossover(), 1.2, 0.5),
+        (None, None, UniformCrossover(), -0.2, 0.5),
+        (None, None, UniformCrossover(), 0.9, 1.2),
+        (None, None, UniformCrossover(), 0.9, -0.2),
+        (None, None, 3, 0.9, 0.5),
+        (3, None, 3, 0.9, 0.5),
     ],
 )
 def test_child_generation_strategy_invalid_value(
+    mutation: BaseMutation | int | None,
     mutation_prob: float,
     crossover: BaseCrossover | int,
     crossover_prob: float,
@@ -643,6 +650,7 @@ def test_child_generation_strategy_invalid_value(
 ) -> None:
     with pytest.raises(ValueError):
         NSGAIIChildGenerationStrategy(
+            mutation=mutation,  # type: ignore[arg-type]
             mutation_prob=mutation_prob,
             crossover=crossover,  # type: ignore[arg-type]
             crossover_prob=crossover_prob,
@@ -681,6 +689,142 @@ def test_child_generation_strategy_mutation_prob(
     assert child_generation_strategy(study, search_space, parent_population) == child_params
 
 
+class _FixedMutation(BaseMutation):
+    def __init__(self, value: float) -> None:
+        self._value = value
+
+    def mutation(
+        self,
+        param: float,
+        rng: np.random.RandomState,
+        study: optuna.study.Study,
+        search_space_bounds: np.ndarray,
+    ) -> float:
+        return self._value
+
+
+def test_child_generation_strategy_mutation() -> None:
+    child_generation_strategy = NSGAIIChildGenerationStrategy(
+        crossover_prob=0.0,
+        crossover=UniformCrossover(),
+        mutation=PolynomialMutation(),
+        mutation_prob=1.0,
+        swapping_prob=0.5,
+        rng=LazyRandomState(seed=1),
+    )
+    study = MagicMock(spec=optuna.study.Study)
+    search_space = {
+        "x": FloatDistribution(0, 10),
+        "y": CategoricalDistribution([-1, 0, 1]),
+    }
+    parent_population = [
+        optuna.trial.create_trial(
+            params={"x": 1.0, "y": 0},
+            distributions=search_space,
+            value=5.0,
+        )
+    ]
+    child_params = child_generation_strategy(study, search_space, parent_population)
+
+    assert set(child_params.keys()) == {"x"}
+    assert 0 <= child_params["x"] <= 10
+
+
+def test_perform_mutation_contains_distribution() -> None:
+    distributions: list[FloatDistribution | IntDistribution] = [
+        FloatDistribution(1e-3, 1e3, log=True),
+        FloatDistribution(0, 1, step=0.2),
+        IntDistribution(1, 100, log=True),
+        IntDistribution(0, 10, step=2),
+    ]
+
+    rng = np.random.RandomState(0)
+    study = MagicMock(spec=optuna.study.Study)
+    for distribution in distributions:
+        value = distribution.low
+        mutated_value = perform_mutation(PolynomialMutation(), rng, study, distribution, value)
+        assert mutated_value is not None
+        assert distribution._contains(distribution.to_internal_repr(mutated_value))
+
+
+def test_perform_mutation_uses_search_space_transform() -> None:
+    log_distribution = FloatDistribution(1e-3, 1e3, log=True)
+    study = MagicMock(spec=optuna.study.Study)
+    assert perform_mutation(
+        _FixedMutation(np.log(10.0)),
+        np.random.RandomState(0),
+        study,
+        log_distribution,
+        1.0,
+    ) == pytest.approx(10.0)
+
+    step_distribution = FloatDistribution(0.0, 1.0, step=0.2)
+    assert perform_mutation(
+        _FixedMutation(0.31), np.random.RandomState(0), study, step_distribution, 0.0
+    ) == pytest.approx(0.4)
+
+    int_distribution = IntDistribution(0, 10, step=2)
+    assert (
+        perform_mutation(_FixedMutation(3.1), np.random.RandomState(0), study, int_distribution, 0)
+        == 4
+    )
+
+    assert (
+        perform_mutation(
+            _FixedMutation(-100.0),
+            np.random.RandomState(0),
+            study,
+            FloatDistribution(0.0, 1.0),
+            0.5,
+        )
+        == 0.0
+    )
+
+
+def test_perform_mutation_categorical_distribution() -> None:
+    assert (
+        perform_mutation(
+            PolynomialMutation(),
+            np.random.RandomState(0),
+            MagicMock(spec=optuna.study.Study),
+            CategoricalDistribution(["a", "b"]),
+            "a",
+        )
+        is None
+    )
+
+
+def test_mutation_invalid_value() -> None:
+    with pytest.raises(ValueError):
+        PolynomialMutation(eta=-1.0)
+
+
+@pytest.mark.parametrize(
+    "param,rand_value,expected_param",
+    [
+        (5.0, 0.0, 0.0),
+        (5.0, 0.25, 5.0 + (np.sqrt(0.625) - 1.0) * 10.0),
+        (5.0, 0.5, 5.0),
+        (5.0, 0.75, 5.0 + (1.0 - np.sqrt(0.625)) * 10.0),
+        (5.0, 1.0, 10.0),
+        (2.0, 0.25, 2.0 + (np.sqrt(0.82) - 1.0) * 10.0),
+        (2.0, 0.75, 2.0 + (1.0 - np.sqrt(0.52)) * 10.0),
+    ],
+)
+def test_mutation_deterministic(param: float, rand_value: float, expected_param: float) -> None:
+    study = optuna.study.create_study()
+    rng = Mock()
+    rng.rand = Mock(return_value=rand_value)
+
+    child_param = PolynomialMutation(eta=1.0).mutation(
+        param=param,
+        rng=rng,
+        study=study,
+        search_space_bounds=np.array([0.0, 10.0]),
+    )
+    np.testing.assert_almost_equal(child_param, expected_param)
+
+
 def test_child_generation_strategy_generation_key() -> None:
     n_params = 2
 
@@ -699,9 +843,9 @@ def test_child_generation_strategy_generation_key() -> None:
     assert mock_func.call_count == 1
     for i, trial in enumerate(study.get_trials()):
         if i < 2:
-            assert trial.system_attrs[_GENERATION_KEY] == 0
+            assert trial.system_attrs[NSGAIISampler._GENERATION_KEY] == 0
         elif i == 2:
-            assert trial.system_attrs[_GENERATION_KEY] == 1
+            assert trial.system_attrs[NSGAIISampler._GENERATION_KEY] == 1
 
 
 @patch(
@@ -752,7 +896,9 @@ def test_call_after_trial_of_random_sampler() -> None:
     sampler = NSGAIISampler()
     study = optuna.create_study(sampler=sampler)
     with patch.object(
-        sampler._random_sampler, "after_trial", wraps=sampler._random_sampler.after_trial
+        sampler._random_sampler,
+        "after_trial",
+        wraps=sampler._random_sampler.after_trial,
     ) as mock_object:
         study.optimize(lambda _: 1.0, n_trials=1)
         assert mock_object.call_count == 1
@@ -806,7 +952,8 @@ def test_crossover_objectives(n_objectives: int, sampler_class: Callable[[], Bas
 
     study = optuna.create_study(directions=["minimize"] * n_objectives, sampler=sampler_class())
     study.optimize(
-        lambda t: [t.suggest_float(f"x{i}", 0, 1) for i in range(n_objectives)], n_trials=n_trials
+        lambda t: [t.suggest_float(f"x{i}", 0, 1) for i in range(n_objectives)],
+        n_trials=n_trials,
     )
 
     assert len(study.trials) == n_trials
@@ -897,7 +1044,6 @@ def test_crossover_inlined_categorical_distribution() -> None:
         BLXAlphaCrossover(),
         SPXCrossover(),
         SBXCrossover(),
-        VSBXCrossover(),
         UNDXCrossover(),
     ],
 )
@@ -934,7 +1080,11 @@ def test_crossover_duplicated_param_values(crossover: BaseCrossover) -> None:
         (SBXCrossover(), 0.0, np.array([2.0, 3.0])),  # c1 = (p1 + p2) / 2.
         (SBXCrossover(), 0.5, np.array([3.0, 4.0])),  # p2.
         (SBXCrossover(), 1.0, np.array([3.0, 4.0])),  # p2.
-        (VSBXCrossover(), 0.0, np.array([2.0, 3.0])),  # c1 = (p1 + p2) / 2.
+        (
+            VSBXCrossover(),
+            0.0,
+            np.array([-1076.02679423, -2151.84728898]),
+        ),  # Check to avoid edge cases that result in 0 division.
         (VSBXCrossover(), 0.5, np.array([3.0, 4.0])),  # p2.
         (VSBXCrossover(), 1.0, np.array([3.0, 4.0])),  # p2.
         # p1, p2 and p3 are on x + 1, and distance from child to PSL is 0.
@@ -965,7 +1115,7 @@ def test_crossover_deterministic(
     def _normal(*args: Any, **kwargs: Any) -> Any:
         if kwargs.get("size") is None:
             return rand_value
-        return np.full(kwargs.get("size"), rand_value)  # type: ignore[arg-type]
+        return np.full(kwargs.get("size"), rand_value)
 
     rng = Mock()
     rng.rand = Mock(side_effect=_rand)

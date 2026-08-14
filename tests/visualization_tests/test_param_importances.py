@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from io import BytesIO
 from typing import Any
-from typing import Callable
 
 import pytest
 
@@ -58,7 +58,7 @@ def test_target_is_none_and_study_is_multi_obj() -> None:
 
 @parametrize_plot_param_importances
 def test_plot_param_importances_customized_target_name(
-    plot_param_importances: Callable[..., Any]
+    plot_param_importances: Callable[..., Any],
 ) -> None:
     params = ["param_a", "param_b"]
     study = prepare_study_with_trials()
@@ -71,7 +71,7 @@ def test_plot_param_importances_customized_target_name(
 
 @parametrize_plot_param_importances
 def test_plot_param_importances_multiobjective_all_objectives_displayed(
-    plot_param_importances: Callable[..., Any]
+    plot_param_importances: Callable[..., Any],
 ) -> None:
     n_objectives = 2
     params = ["param_a"]
@@ -190,8 +190,9 @@ def test_switch_label_when_param_insignificant() -> None:
 
     info = _get_importances_info(study, None, None, None, "Objective Value")
 
-    # Test if label for `y` param has been switched to `<0.01`.
-    assert info.importance_labels == ["<0.01", "1.00"]
+    # Test if label for `y` param is smaller than label for `x` param,
+    # because `y` param is insignificant.
+    assert info.importance_values[0] < info.importance_values[1]
 
 
 @pytest.mark.parametrize("inf_value", [float("inf"), -float("inf")])

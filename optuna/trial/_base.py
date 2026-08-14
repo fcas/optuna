@@ -1,17 +1,19 @@
+from __future__ import annotations
+
 import abc
-import datetime
 from typing import Any
-from typing import Dict
-from typing import Optional
 from typing import overload
-from typing import Sequence
+from typing import TYPE_CHECKING
 
 from optuna._deprecated import deprecated_func
-from optuna.distributions import BaseDistribution
-from optuna.distributions import CategoricalChoiceType
 
 
-_SUGGEST_INT_POSITIONAL_ARGS = ["self", "name", "low", "high", "step", "log"]
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    import datetime
+
+    from optuna.distributions import BaseDistribution
+    from optuna.distributions import CategoricalChoiceType
 
 
 class BaseTrial(abc.ABC):
@@ -27,7 +29,7 @@ class BaseTrial(abc.ABC):
         low: float,
         high: float,
         *,
-        step: Optional[float] = None,
+        step: float | None = None,
         log: bool = False,
     ) -> float:
         raise NotImplementedError
@@ -104,29 +106,37 @@ class BaseTrial(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def params(self) -> Dict[str, Any]:
+    def params(self) -> dict[str, Any]:
         raise NotImplementedError
 
     @property
     @abc.abstractmethod
-    def distributions(self) -> Dict[str, BaseDistribution]:
+    def distributions(self) -> dict[str, BaseDistribution]:
         raise NotImplementedError
 
     @property
     @abc.abstractmethod
-    def user_attrs(self) -> Dict[str, Any]:
+    def user_attrs(self) -> dict[str, Any]:
         raise NotImplementedError
 
     @property
     @abc.abstractmethod
-    def system_attrs(self) -> Dict[str, Any]:
+    def system_attrs(self) -> dict[str, Any]:
         raise NotImplementedError
 
     @property
     @abc.abstractmethod
-    def datetime_start(self) -> Optional[datetime.datetime]:
+    def datetime_start(self) -> datetime.datetime | None:
         raise NotImplementedError
 
     @property
     def number(self) -> int:
+        raise NotImplementedError
+
+    @property
+    def constraints(self) -> dict[str, float]:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def set_constraint(self, key: str, value: float) -> None:
         raise NotImplementedError

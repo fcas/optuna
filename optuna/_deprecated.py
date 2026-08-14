@@ -1,8 +1,8 @@
+from __future__ import annotations
+
 import functools
 import textwrap
 from typing import Any
-from typing import Callable
-from typing import Optional
 from typing import TYPE_CHECKING
 from typing import TypeVar
 import warnings
@@ -14,6 +14,8 @@ from optuna._experimental import _validate_version
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from typing_extensions import ParamSpec
 
     FT = TypeVar("FT")
@@ -41,8 +43,8 @@ def _validate_two_version(old_version: str, new_version: str) -> None:
     if version.parse(old_version) > version.parse(new_version):
         raise ValueError(
             "Invalid version relationship. The deprecated version must be smaller than "
-            "the removed version, but (deprecated version, removed version) = ({}, {}) are "
-            "specified.".format(old_version, new_version)
+            "the removed version, but (deprecated version, removed version) = "
+            f"({old_version}, {new_version}) are specified."
         )
 
 
@@ -53,8 +55,8 @@ def _format_text(text: str) -> str:
 def deprecated_func(
     deprecated_version: str,
     removed_version: str,
-    name: Optional[str] = None,
-    text: Optional[str] = None,
+    name: str | None = None,
+    text: str | None = None,
 ) -> "Callable[[Callable[FP, FT]], Callable[FP, FT]]":
     """Decorate function as deprecated.
 
@@ -120,8 +122,8 @@ def deprecated_func(
 def deprecated_class(
     deprecated_version: str,
     removed_version: str,
-    name: Optional[str] = None,
-    text: Optional[str] = None,
+    name: str | None = None,
+    text: str | None = None,
 ) -> "Callable[[CT], CT]":
     """Decorate class as deprecated.
 

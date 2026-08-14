@@ -1,11 +1,6 @@
 from __future__ import annotations
 
 from typing import Any
-from typing import Callable
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -14,13 +9,16 @@ from optuna._transform import _SearchSpaceTransform
 from optuna.distributions import BaseDistribution
 from optuna.distributions import FloatDistribution
 from optuna.distributions import IntDistribution
-from optuna.samplers.nsgaii._crossovers._base import BaseCrossover
-from optuna.study import StudyDirection
-from optuna.trial import FrozenTrial
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from collections.abc import Sequence
+
+    from optuna.samplers.nsgaii._crossovers._base import BaseCrossover
     from optuna.study import Study
+    from optuna.study import StudyDirection
+    from optuna.trial import FrozenTrial
 
 
 _NUMERICAL_DISTRIBUTIONS = (
@@ -30,16 +28,16 @@ _NUMERICAL_DISTRIBUTIONS = (
 
 
 def _try_crossover(
-    parents: List[FrozenTrial],
+    parents: list[FrozenTrial],
     crossover: BaseCrossover,
     study: Study,
     rng: np.random.RandomState,
     swapping_prob: float,
-    categorical_search_space: Dict[str, BaseDistribution],
-    numerical_search_space: Dict[str, BaseDistribution],
-    numerical_transform: Optional[_SearchSpaceTransform],
-) -> Dict[str, Any]:
-    child_params: Dict[str, Any] = {}
+    categorical_search_space: dict[str, BaseDistribution],
+    numerical_search_space: dict[str, BaseDistribution],
+    numerical_transform: _SearchSpaceTransform | None,
+) -> dict[str, Any]:
+    child_params: dict[str, Any] = {}
 
     if len(categorical_search_space) > 0:
         parents_categorical_params = np.array(
@@ -87,20 +85,20 @@ def perform_crossover(
     crossover: BaseCrossover,
     study: Study,
     parent_population: Sequence[FrozenTrial],
-    search_space: Dict[str, BaseDistribution],
+    search_space: dict[str, BaseDistribution],
     rng: np.random.RandomState,
     swapping_prob: float,
     dominates: Callable[[FrozenTrial, FrozenTrial, Sequence[StudyDirection]], bool],
-) -> Dict[str, Any]:
-    numerical_search_space: Dict[str, BaseDistribution] = {}
-    categorical_search_space: Dict[str, BaseDistribution] = {}
+) -> dict[str, Any]:
+    numerical_search_space: dict[str, BaseDistribution] = {}
+    categorical_search_space: dict[str, BaseDistribution] = {}
     for key, value in search_space.items():
         if isinstance(value, _NUMERICAL_DISTRIBUTIONS):
             numerical_search_space[key] = value
         else:
             categorical_search_space[key] = value
 
-    numerical_transform: Optional[_SearchSpaceTransform] = None
+    numerical_transform: _SearchSpaceTransform | None = None
     if len(numerical_search_space) != 0:
         numerical_transform = _SearchSpaceTransform(numerical_search_space)
 
@@ -129,8 +127,8 @@ def _select_parents(
     parent_population: Sequence[FrozenTrial],
     rng: np.random.RandomState,
     dominates: Callable[[FrozenTrial, FrozenTrial, Sequence[StudyDirection]], bool],
-) -> List[FrozenTrial]:
-    parents: List[FrozenTrial] = []
+) -> list[FrozenTrial]:
+    parents: list[FrozenTrial] = []
     for _ in range(crossover.n_parents):
         parent = _select_parent(
             study, [t for t in parent_population if t not in parents], rng, dominates
@@ -157,7 +155,7 @@ def _select_parent(
         return candidate1
 
 
-def _is_contained(params: Dict[str, Any], search_space: Dict[str, BaseDistribution]) -> bool:
+def _is_contained(params: dict[str, Any], search_space: dict[str, BaseDistribution]) -> bool:
     for param_name in params.keys():
         param, param_distribution = params[param_name], search_space[param_name]
 
@@ -170,7 +168,7 @@ def _inlined_categorical_uniform_crossover(
     parent_params: np.ndarray,
     rng: np.random.RandomState,
     swapping_prob: float,
-    search_space: Dict[str, BaseDistribution],
+    search_space: dict[str, BaseDistribution],
 ) -> np.ndarray:
     # We can't use uniform crossover implementation of `BaseCrossover` for
     # parameters from `CategoricalDistribution`, since categorical params are

@@ -6,7 +6,6 @@ build-backend = "setuptools.build_meta"
 name = "optuna"
 description = "A hyperparameter optimization framework"
 readme = "README.md"
-license = {file = "LICENSE"}
 authors = [
   {name = "Takuya Akiba"}
 ]
@@ -16,12 +15,12 @@ classifiers = [
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.7",
-  "Programming Language :: Python :: 3.8",
   "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Programming Language :: Python :: 3 :: Only",
   "Topic :: Scientific/Engineering",
   "Topic :: Scientific/Engineering :: Mathematics",
@@ -30,42 +29,24 @@ classifiers = [
   "Topic :: Software Development :: Libraries",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-requires-python = ">=3.7"
+requires-python = ">=3.9"
 dependencies = [
   "alembic>=1.5.0",
   "colorlog",
   "numpy",
   "packaging>=20.0",
-  "sqlalchemy>=1.3.0",
+  "sqlalchemy>=1.4.2",
   "tqdm",
   "PyYAML",  # Only used in `optuna/cli.py`.
 ]
 dynamic = ["version"]
 
 [project.optional-dependencies]
-benchmark = [
-  "asv>=0.5.0",
-  "botorch",
-  "cma",
-  "virtualenv"
-]
-checking = [
-  "black",
-  "blackdoc",
-  "flake8",
-  "isort",
-  "mypy",
-  "mypy_boto3_s3",
-  "types-PyYAML",
-  "types-redis",
-  "types-setuptools",
-  "types-tqdm",
-  "typing_extensions>=3.10.0.0",
-]
 document = [
   "ase",
-  "cmaes>=0.10.0",  # optuna/samplers/_cmaes.py.
+  "cmaes>=0.12.0",  # optuna/samplers/_cmaes.py.
   "fvcore",
+  "kaleido<0.4,!=0.2.1.post1",  # TODO(nzw0301): Remove the version constraint by installing browser separately.
   "lightgbm",
   "matplotlib!=3.6.0",
   "pandas",
@@ -75,33 +56,71 @@ document = [
   "sphinx",
   "sphinx-copybutton",
   "sphinx-gallery",
-  "sphinx-plotly-directive",
+  "sphinx-notfound-page",
   "sphinx_rtd_theme>=1.2.0",
   "torch",
   "torchvision",
 ]
 optional = [
   "boto3",  # optuna/artifacts/_boto3.py.
-  "cmaes>=0.10.0",  # optuna/samplers/_cmaes.py.
+  "cmaes>=0.12.0",  # optuna/samplers/_cmaes.py.
   "google-cloud-storage",  # optuna/artifacts/_gcs.py.
   "matplotlib!=3.6.0",  # optuna/visualization/matplotlib.
-  "pandas",  # optuna/study.py.
+  "pandas",  # optuna/study/_dataframe.py.
   "plotly>=4.9.0",  # optuna/visualization.
-  "redis",  # optuna/storages/redis.py.
-  "scikit-learn>=0.24.2",
-  # optuna/visualization/param_importances.py.
-  "scipy",  # optuna/samplers/_gp
-  "torch",  # optuna/samplers/_gp
+  "redis",  # optuna/storages/journal/_redis.py.
+  "scikit-learn>=0.24.2",  # optuna/importance.
+  "scipy",  # optuna/_gp.
+  "torch",  # optuna/_gp.
+  "greenlet",  # optuna/_gp. necessary for faster gp.
+  "grpcio",  # optuna/storages/_grpc.
+  "protobuf>=5.28.1",  # optuna/storages/_grpc.
+]
+
+[dependency-groups]
+checking = [
+  "mypy",
+  "mypy_boto3_s3",
+  "ruff",
+  "scipy-stubs; python_version>='3.10'",
+  "types-PyYAML",
+  "types-redis",
+  "types-setuptools",
+  "types-tqdm",
+  "typing_extensions>=3.10.0.0",
 ]
 test = [
-  "coverage",
   "fakeredis[lua]",
-  "kaleido",
+  "kaleido<0.4,!=0.2.1.post1",  # TODO(nzw0301): Remove the version constraint by installing browser separately.
   "moto",
   "pytest",
-  "scipy>=1.9.2; python_version>='3.8'",
-  "torch",
+  "pytest-xdist",
+  "scipy>=1.9.2",
+  "torch",  # optuna/_gp.
+  "greenlet",  # optuna/_gp.
+  "grpcio",  # optuna/storages/_grpc.
+  "protobuf>=5.28.1",  # optuna/storages/_grpc.
 ]
+
+[tool.uv]
+default-groups = []
+exclude-newer = "5 days"
+exclude-newer-package = { torch = false, optuna = false, optuna-integration = false }
+# Workaround for https://github.com/pytorch/vision/issues/9519: a stray
+# torchvision 0.27.1+df56172 wheel (cp311 win_arm64 only) was misplaced on the PyTorch CPU index.
+# Since `+df56172` sorts higher than `+cpu` under PEP 440, the resolver picks it and then fails to
+# install on Linux + Python 3.12. Exclude it so the resolver falls back to the proper +cpu build.
+# TODO(y0z): Remove this constraint once the stray wheel is yanked from the index.
+constraint-dependencies = ["torchvision!=0.27.1+df56172"]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
 
 [project.urls]
 homepage = "https://optuna.org/"
@@ -126,39 +145,70 @@ version = {attr = "optuna.version.__version__"}
   "py.typed",
 ]
 
-[tool.black]
+[tool.ruff]
 line-length = 99
-target-version = ['py38']
-exclude = '''
-/(
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.venv
-  | venv
-  | _build
-  | buck-out
-  | build
-  | dist
-  | docs
-)/
-'''
+target-version = "py39"
+exclude = [
+  ".eggs",
+  ".git",
+  ".hg",
+  ".ruff_cache",
+  ".mypy_cache",
+  ".venv",
+  "venv",
+  "_build",
+  "buck-out",
+  "build",
+  "dist",
+  "docs",
+  "optuna/storages/_grpc/auto_generated",
+]
 
-[tool.isort]
-profile = 'black'
-src_paths = ['optuna', 'tests', 'docs', 'benchmarks']
-skip_glob = ['docs/source/conf.py', '**/alembic/versions/*.py', 'tutorial/**/*.py']
-line_length = 99
-lines_after_imports = 2
-force_single_line = 'True'
-force_sort_within_sections = 'True'
-order_by_type = 'False'
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["optuna", "tests", "docs"]
+lines-after-imports = 2
+force-single-line = true
+force-sort-within-sections = true
+order-by-type = false
+
+[tool.ruff.lint.per-file-ignores]
+"tutorial/**/*.py" = ["E", "W", "F", "I"]
+"**/alembic/versions/*.py" = ["I"]
+
+[tool.ruff.format]
+docstring-code-format = true
 
 [tool.pytest.ini_options]
 addopts = "--color=yes"
 filterwarnings = 'ignore::optuna.exceptions.ExperimentalWarning'
 markers = [
-  "skip_coverage: marks tests are skipped when calculating the coverage",
-  "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+  "slow: marks tests as slow (deselect with '-m \"not slow\"')"
 ]
+
+[tool.mypy]
+# Options configure mypy's strict mode.
+warn_unused_configs = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+strict_equality = true
+extra_checks = true
+no_implicit_reexport = true
+
+ignore_missing_imports = true
+exclude = [".venv", "venv", "build", "docs", "tutorial", "optuna/storages/_rdb/alembic", "optuna/storages/_grpc/auto_generated"]
+
+[[tool.mypy.overrides]]
+module = 'optuna.storages._grpc.auto_generated/*'
+follow_imports = "skip"

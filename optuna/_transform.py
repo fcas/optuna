@@ -1,16 +1,18 @@
+from __future__ import annotations
+
 import math
 from typing import Any
-from typing import Dict
-from typing import List
-from typing import Tuple
-from typing import Union
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from optuna.distributions import BaseDistribution
 from optuna.distributions import CategoricalDistribution
 from optuna.distributions import FloatDistribution
 from optuna.distributions import IntDistribution
+
+
+if TYPE_CHECKING:
+    from optuna.distributions import BaseDistribution
 
 
 class _SearchSpaceTransform:
@@ -62,7 +64,7 @@ class _SearchSpaceTransform:
 
     def __init__(
         self,
-        search_space: Dict[str, BaseDistribution],
+        search_space: dict[str, BaseDistribution],
         transform_log: bool = True,
         transform_step: bool = True,
         transform_0_1: bool = False,
@@ -85,14 +87,14 @@ class _SearchSpaceTransform:
             return self._raw_bounds
 
     @property
-    def column_to_encoded_columns(self) -> List[np.ndarray]:
+    def column_to_encoded_columns(self) -> list[np.ndarray]:
         return self._column_to_encoded_columns
 
     @property
     def encoded_column_to_column(self) -> np.ndarray:
         return self._encoded_column_to_column
 
-    def transform(self, params: Dict[str, Any]) -> np.ndarray:
+    def transform(self, params: dict[str, Any]) -> np.ndarray:
         """Transform a parameter configuration from actual values to continuous space.
 
         Args:
@@ -112,7 +114,7 @@ class _SearchSpaceTransform:
             param = params[name]
 
             if isinstance(distribution, CategoricalDistribution):
-                choice_idx = distribution.to_internal_repr(param)
+                choice_idx = int(distribution.to_internal_repr(param))
                 trans_params[bound_idx + choice_idx] = 1
                 bound_idx += len(distribution.choices)
             else:
@@ -130,7 +132,7 @@ class _SearchSpaceTransform:
 
         return trans_params
 
-    def untransform(self, trans_params: np.ndarray) -> Dict[str, Any]:
+    def untransform(self, trans_params: np.ndarray) -> dict[str, Any]:
         """Untransform a parameter configuration from continuous space to actual values.
 
         Args:
@@ -171,8 +173,8 @@ class _SearchSpaceTransform:
 
 
 def _transform_search_space(
-    search_space: Dict[str, BaseDistribution], transform_log: bool, transform_step: bool
-) -> Tuple[np.ndarray, List[np.ndarray], np.ndarray]:
+    search_space: dict[str, BaseDistribution], transform_log: bool, transform_step: bool
+) -> tuple[np.ndarray, list[np.ndarray], np.ndarray]:
     assert len(search_space) > 0, "Cannot transform if no distributions are given."
 
     n_bounds = sum(
@@ -181,7 +183,7 @@ def _transform_search_space(
     )
 
     bounds = np.empty((n_bounds, 2), dtype=np.float64)
-    column_to_encoded_columns: List[np.ndarray] = []
+    column_to_encoded_columns: list[np.ndarray] = []
     encoded_column_to_column = np.empty(n_bounds, dtype=np.int64)
 
     bound_idx = 0
@@ -242,7 +244,7 @@ def _transform_search_space(
 
 
 def _transform_numerical_param(
-    param: Union[int, float], distribution: BaseDistribution, transform_log: bool
+    param: int | float, distribution: BaseDistribution, transform_log: bool
 ) -> float:
     d = distribution
 
@@ -266,7 +268,7 @@ def _transform_numerical_param(
 
 def _untransform_numerical_param(
     trans_param: float, distribution: BaseDistribution, transform_log: bool
-) -> Union[int, float]:
+) -> int | float:
     d = distribution
 
     if isinstance(d, CategoricalDistribution):
@@ -290,13 +292,14 @@ def _untransform_numerical_param(
     elif isinstance(d, IntDistribution):
         if d.log:
             if transform_log:
-                param = int(np.clip(np.round(math.exp(trans_param)), d.low, d.high))
+                param = int(round(math.exp(trans_param)))
+                param = min(max(param, d.low), d.high)
             else:
                 param = int(trans_param)
         else:
-            param = int(
-                np.clip(np.round((trans_param - d.low) / d.step) * d.step + d.low, d.low, d.high)
-            )
+            step_index = math.floor((trans_param - d.low) / d.step + 0.5)
+            param = step_index * d.step + d.low
+            param = min(max(param, d.low), d.high)
     else:
         assert False, "Should not reach. Unexpected distribution."
 

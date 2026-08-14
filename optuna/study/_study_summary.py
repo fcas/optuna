@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
-import datetime
 from typing import Any
-import warnings
+from typing import TYPE_CHECKING
 
 from optuna import logging
-from optuna import trial
-from optuna.study._study_direction import StudyDirection
 
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from datetime import datetime
+
+    from optuna.study._study_direction import StudyDirection
+    from optuna.trial import FrozenTrial
 
 _logger = logging.get_logger(__name__)
 
@@ -34,15 +37,6 @@ class StudySummary:
         user_attrs:
             Dictionary that contains the attributes of the :class:`~optuna.study.Study` set with
             :func:`optuna.study.Study.set_user_attr`.
-        system_attrs:
-            Dictionary that contains the attributes of the :class:`~optuna.study.Study` internally
-            set by Optuna.
-
-            .. warning::
-                Deprecated in v3.1.0. ``system_attrs`` argument will be removed in the future.
-                The removal of this feature is currently scheduled for v5.0.0,
-                but this schedule is subject to change.
-                See https://github.com/optuna/optuna/releases/tag/v3.1.0.
         n_trials:
             The number of trials ran in the :class:`~optuna.study.Study`.
         datetime_start:
@@ -54,11 +48,10 @@ class StudySummary:
         self,
         study_name: str,
         direction: StudyDirection | None,
-        best_trial: trial.FrozenTrial | None,
+        best_trial: FrozenTrial | None,
         user_attrs: dict[str, Any],
-        system_attrs: dict[str, Any],
         n_trials: int,
-        datetime_start: datetime.datetime | None,
+        datetime_start: datetime | None,
         study_id: int,
         *,
         directions: Sequence[StudyDirection] | None = None,
@@ -74,7 +67,6 @@ class StudySummary:
             raise ValueError("Specify only one of `direction` and `directions`.")
         self.best_trial = best_trial
         self.user_attrs = user_attrs
-        self._system_attrs = system_attrs
         self.n_trials = n_trials
         self.datetime_start = datetime_start
         self._study_id = study_id
@@ -109,15 +101,3 @@ class StudySummary:
     @property
     def directions(self) -> Sequence[StudyDirection]:
         return self._directions
-
-    @property
-    def system_attrs(self) -> dict[str, Any]:
-        warnings.warn(
-            "`system_attrs` has been deprecated in v3.1.0. "
-            "The removal of this feature is currently scheduled for v5.0.0, "
-            "but this schedule is subject to change. "
-            "See https://github.com/optuna/optuna/releases/tag/v3.1.0.",
-            FutureWarning,
-        )
-
-        return self._system_attrs

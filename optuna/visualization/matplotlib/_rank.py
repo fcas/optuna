@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import Callable
+from typing import TYPE_CHECKING
+
+import numpy as np
 
 from optuna._experimental import experimental_func
-from optuna.logging import get_logger
-from optuna.study import Study
-from optuna.trial import FrozenTrial
 from optuna.visualization._rank import _get_rank_info
 from optuna.visualization._rank import _get_tick_info
 from optuna.visualization._rank import _RankPlotInfo
@@ -13,13 +12,17 @@ from optuna.visualization._rank import _RankSubplotInfo
 from optuna.visualization.matplotlib._matplotlib_imports import _imports
 
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from optuna.study import Study
+    from optuna.trial import FrozenTrial
+
+
 if _imports.is_successful():
     from optuna.visualization.matplotlib._matplotlib_imports import Axes
     from optuna.visualization.matplotlib._matplotlib_imports import PathCollection
     from optuna.visualization.matplotlib._matplotlib_imports import plt
-
-
-_logger = get_logger(__name__)
 
 
 @experimental_func("3.2.0")
@@ -29,47 +32,13 @@ def plot_rank(
     *,
     target: Callable[[FrozenTrial], float] | None = None,
     target_name: str = "Objective Value",
-) -> "Axes":
+) -> "Axes | np.ndarray":
     """Plot parameter relations as scatter plots with colors indicating ranks of target value.
 
     Note that trials missing the specified parameters will not be plotted.
 
     .. seealso::
         Please refer to :func:`optuna.visualization.plot_rank` for an example.
-
-    Warnings:
-        Output figures of this Matplotlib-based
-        :func:`~optuna.visualization.matplotlib.plot_rank` function would be different from
-        those of the Plotly-based :func:`~optuna.visualization.plot_rank`.
-
-    Example:
-
-        The following code snippet shows how to plot the parameter relationship as a rank plot.
-
-        .. plot::
-
-            import optuna
-
-
-            def objective(trial):
-                x = trial.suggest_float("x", -100, 100)
-                y = trial.suggest_categorical("y", [-1, 0, 1])
-
-                c0 = 400 - (x + y)**2
-                trial.set_user_attr("constraint", [c0])
-
-                return x ** 2 + y
-
-
-            def constraints(trial):
-                return trial.user_attrs["constraint"]
-
-
-            sampler = optuna.samplers.TPESampler(seed=10, constraints_func=constraints)
-            study = optuna.create_study(sampler=sampler)
-            study.optimize(objective, n_trials=30)
-
-            optuna.visualization.matplotlib.plot_rank(study, params=["x", "y"])
 
     Args:
         study:
@@ -86,21 +55,18 @@ def plot_rank(
             Target's name to display on the color bar.
 
     Returns:
-        A :class:`matplotlib.axes.Axes` object.
+        A :class:`matplotlib.axes.Axes` object or a :class:`numpy.ndarray` of
+        :class:`matplotlib.axes.Axes` objects.
     """
 
     _imports.check()
-    _logger.warning(
-        "Output figures of this Matplotlib-based `plot_rank` function would be different from "
-        "those of the Plotly-based `plot_rank`."
-    )
     info = _get_rank_info(study, params, target, target_name)
     return _get_rank_plot(info)
 
 
 def _get_rank_plot(
     info: _RankPlotInfo,
-) -> "Axes":
+) -> "Axes | np.ndarray":
     params = info.params
     sub_plot_infos = info.sub_plot_infos
 
@@ -160,4 +126,9 @@ def _add_rank_subplot(
     if info.yaxis.is_log:
         ax.set_yscale("log")
 
-    return ax.scatter(x=info.xs, y=info.ys, c=info.colors / 255, edgecolors="grey")
+    return ax.scatter(
+        x=[str(x) for x in info.xs] if info.xaxis.is_cat else info.xs,
+        y=[str(y) for y in info.ys] if info.yaxis.is_cat else info.ys,
+        c=info.colors / 255,
+        edgecolors="grey",
+    )

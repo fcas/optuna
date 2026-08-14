@@ -1,12 +1,7 @@
 from __future__ import annotations
 
+from typing import Protocol
 from typing import TYPE_CHECKING
-
-
-try:
-    from typing import Protocol
-except ImportError:
-    from typing_extensions import Protocol  # type: ignore
 
 
 if TYPE_CHECKING:
@@ -15,6 +10,8 @@ if TYPE_CHECKING:
 
 class ArtifactStore(Protocol):
     """A protocol defining the interface for an artifact backend.
+
+    The methods defined in this protocol are not supposed to be directly called by library users.
 
     An artifact backend is responsible for managing the storage and retrieval
     of artifact data. The backend should provide methods for opening, writing

@@ -1,20 +1,22 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import NamedTuple
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from optuna._experimental import experimental_func
-from optuna._hypervolume import WFG
+from optuna._hypervolume import compute_hypervolume
 from optuna.logging import get_logger
-from optuna.samplers._base import _CONSTRAINTS_KEY
-from optuna.study import Study
-from optuna.study._multi_objective import _dominates
 from optuna.study._study_direction import StudyDirection
-from optuna.trial import FrozenTrial
 from optuna.trial import TrialState
 from optuna.visualization._plotly_imports import _imports
+
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from optuna.study import Study
 
 
 if _imports.is_successful():
@@ -34,31 +36,6 @@ def plot_hypervolume_history(
     reference_point: Sequence[float],
 ) -> "go.Figure":
     """Plot hypervolume history of all trials in a study.
-
-    Example:
-
-        The following code snippet shows how to plot optimization history.
-
-        .. plotly::
-
-            import optuna
-
-
-            def objective(trial):
-                x = trial.suggest_float("x", 0, 5)
-                y = trial.suggest_float("y", 0, 3)
-
-                v0 = 4 * x ** 2 + 4 * y ** 2
-                v1 = (x - 5) ** 2 + (y - 5) ** 2
-                return v0, v1
-
-
-            study = optuna.create_study(directions=["minimize", "minimize"])
-            study.optimize(objective, n_trials=50)
-
-            reference_point=[100., 50.]
-            fig = optuna.visualization.plot_hypervolume_history(study, reference_point)
-            fig.show()
 
     Args:
         study:
@@ -123,42 +100,40 @@ def _get_hypervolume_history_info(
 
     # Only feasible trials are considered in hypervolume computation.
     trial_numbers = []
-    values = []
-    best_trials: list[FrozenTrial] = []
+    hypervolume_values = []
+    best_trials_values_normalized: np.ndarray | None = None
     hypervolume = 0.0
     for trial in completed_trials:
         trial_numbers.append(trial.number)
 
-        has_constraints = _CONSTRAINTS_KEY in trial.system_attrs
-        if has_constraints:
-            constraints_values = trial.system_attrs[_CONSTRAINTS_KEY]
-            if any(map(lambda x: x > 0.0, constraints_values)):
-                # The trial is infeasible.
-                values.append(hypervolume)
-                continue
-
-        if any(map(lambda t: _dominates(t, trial, study.directions), best_trials)):
-            # The trial is not on the Pareto front.
-            values.append(hypervolume)
+        if any(x > 0.0 for x in trial.constraints.values()):
+            # The trial is infeasible.
+            hypervolume_values.append(hypervolume)
             continue
 
-        best_trials = list(
-            filter(lambda t: not _dominates(trial, t, study.directions), best_trials)
-        ) + [trial]
+        values_normalized = (signs * trial.values)[np.newaxis, :]
+        if best_trials_values_normalized is not None:
+            if (best_trials_values_normalized <= values_normalized).all(axis=1).any(axis=0):
+                # The trial is not on the Pareto front.
+                hypervolume_values.append(hypervolume)
+                continue
 
-        solution_set = np.asarray(
-            list(
-                filter(
-                    lambda v: (v <= minimization_reference_point).all(),
-                    [signs * trial.values for trial in best_trials],
-                )
+        if (values_normalized > minimization_reference_point).any():
+            hypervolume_values.append(hypervolume)
+            continue
+        hypervolume += np.prod(minimization_reference_point - values_normalized)
+        if best_trials_values_normalized is None:
+            best_trials_values_normalized = values_normalized
+        else:
+            limited_sols = np.maximum(best_trials_values_normalized, values_normalized)
+            hypervolume -= compute_hypervolume(limited_sols, minimization_reference_point)
+            is_kept = (best_trials_values_normalized < values_normalized).any(axis=1)
+            best_trials_values_normalized = np.concatenate(
+                [best_trials_values_normalized[is_kept, :], values_normalized], axis=0
             )
-        )
-        if solution_set.size > 0:
-            hypervolume = WFG().compute(solution_set, minimization_reference_point)
-        values.append(hypervolume)
+        hypervolume_values.append(hypervolume)
 
-    if len(best_trials) == 0:
+    if best_trials_values_normalized is None:
         _logger.warning("Your study does not have any feasible trials.")
 
-    return _HypervolumeHistoryInfo(trial_numbers, values)
+    return _HypervolumeHistoryInfo(trial_numbers, hypervolume_values)

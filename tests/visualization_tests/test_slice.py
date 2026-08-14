@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from collections.abc import Sequence
 from io import BytesIO
 from typing import Any
-from typing import Callable
+from typing import Literal
 
 import pytest
 
@@ -16,6 +18,7 @@ from optuna.testing.visualization import prepare_study_with_trials
 from optuna.trial import create_trial
 from optuna.visualization import plot_slice as plotly_plot_slice
 from optuna.visualization._plotly_imports import go
+from optuna.visualization._slice import _generate_slice_subplot
 from optuna.visualization._slice import _get_slice_plot_info
 from optuna.visualization._slice import _SlicePlotInfo
 from optuna.visualization._slice import _SliceSubplotInfo
@@ -74,7 +77,7 @@ def _create_study_mixture_category_types() -> Study:
 
 
 @parametrize_plot_slice
-def test_plot_slice_customized_target_name(plot_slice: Callable[..., Any]) -> None:
+def test_plot_slice_customized_target_name(plot_slice: Callable[..., Sequence]) -> None:
     params = ["param_a", "param_b"]
     study = prepare_study_with_trials()
     figure = plot_slice(study, params=params, target_name="Target Name")
@@ -429,7 +432,7 @@ def test_get_slice_plot_info_nonfinite_multiobjective(objective: int, value: flo
 
 
 @pytest.mark.parametrize("direction", ["minimize", "maximize"])
-def test_color_map(direction: str) -> None:
+def test_color_map(direction: Literal["minimize", "maximize"]) -> None:
     study = create_study(direction=direction)
     for i in range(3):
         study.add_trial(
@@ -447,3 +450,37 @@ def test_color_map(direction: str) -> None:
     marker = plotly_plot_slice(study).data[0]["marker"]
     assert COLOR_SCALE == [v[1] for v in marker["colorscale"]]
     assert "reversecale" not in marker
+
+
+def test_generate_slice_subplot_filters_none_x_values_for_numerical_axis() -> None:
+    subplot_info = _SliceSubplotInfo(
+        param_name="param_a",
+        x=[None, 2.0],
+        y=[1.0, 3.0],
+        trial_numbers=[0, 1],
+        is_log=False,
+        is_numerical=True,
+        x_labels=None,
+        constraints=[True, True],
+    )
+    traces = _generate_slice_subplot(subplot_info)
+    feasible_trace = traces[0]
+    assert list(feasible_trace.x) == [2.0]
+    assert list(feasible_trace.y) == [3.0]
+
+
+def test_generate_slice_subplot_keeps_none_category_values() -> None:
+    subplot_info = _SliceSubplotInfo(
+        param_name="param_a",
+        x=[None, "100"],
+        y=[1.0, 3.0],
+        trial_numbers=[0, 1],
+        is_log=False,
+        is_numerical=False,
+        x_labels=(None, "100"),
+        constraints=[True, True],
+    )
+    traces = _generate_slice_subplot(subplot_info)
+    feasible_trace = traces[0]
+    assert list(feasible_trace.x) == ["None", "'100'"]
+    assert list(feasible_trace.y) == [1.0, 3.0]

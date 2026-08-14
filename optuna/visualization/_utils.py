@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from collections.abc import Sequence
 import json
 from typing import Any
-from typing import Callable
 from typing import cast
-from typing import Sequence
-import warnings
 
 import numpy as np
 
 import optuna
+from optuna._warnings import optuna_warn
 from optuna.distributions import CategoricalDistribution
 from optuna.distributions import FloatDistribution
 from optuna.distributions import IntDistribution
@@ -64,72 +64,35 @@ def _check_plot_args(
         )
 
     if target is not None and target_name == "Objective Value":
-        warnings.warn(
+        optuna_warn(
             "`target` is specified, but `target_name` is the default value, 'Objective Value'."
         )
 
 
 def _is_log_scale(trials: list[FrozenTrial], param: str) -> bool:
     for trial in trials:
-        if param in trial.params:
-            dist = trial.distributions[param]
-
-            if isinstance(dist, (FloatDistribution, IntDistribution)):
-                if dist.log:
-                    return True
-
+        if param not in trial.params:
+            continue
+        dist = trial.distributions[param]
+        return isinstance(dist, (FloatDistribution, IntDistribution)) and dist.log
     return False
 
 
-def _is_categorical(trials: list[FrozenTrial], param: str) -> bool:
-    return any(
-        isinstance(t.distributions[param], CategoricalDistribution)
-        for t in trials
-        if param in t.params
-    )
-
-
 def _is_numerical(trials: list[FrozenTrial], param: str) -> bool:
-    return all(
-        (isinstance(t.params[param], int) or isinstance(t.params[param], float))
-        and not isinstance(t.params[param], bool)
-        for t in trials
-        if param in t.params
-    )
-
-
-def _get_param_values(trials: list[FrozenTrial], p_name: str) -> list[Any]:
-    values = [t.params[p_name] for t in trials if p_name in t.params]
-    if _is_numerical(trials, p_name):
-        return values
-    return list(map(str, values))
-
-
-def _get_skipped_trial_numbers(
-    trials: list[FrozenTrial], used_param_names: Sequence[str]
-) -> set[int]:
-    """Utility function for ``plot_parallel_coordinate``.
-
-    If trial's parameters do not contain a parameter in ``used_param_names``,
-    ``plot_parallel_coordinate`` methods do not use such trials.
-
-    Args:
-        trials:
-            List of ``FrozenTrial``s.
-        used_param_names:
-            The parameter names used in ``plot_parallel_coordinate``.
-
-    Returns:
-        A set of invalid trial numbers.
-    """
-
-    skipped_trial_numbers = set()
     for trial in trials:
-        for used_param in used_param_names:
-            if used_param not in trial.params.keys():
-                skipped_trial_numbers.add(trial.number)
-                break
-    return skipped_trial_numbers
+        if param not in trial.params:
+            continue
+        dist = trial.distributions[param]
+        if isinstance(dist, (IntDistribution, FloatDistribution)):
+            return True
+        elif isinstance(dist, CategoricalDistribution):
+            # NOTE: Although it is a bit odd to do so, we keep it as is only for visualization.
+            return all(
+                isinstance(v, (int, float)) and not isinstance(v, bool) for v in dist.choices
+            )
+        else:
+            assert False, "Should not reach."
+    return True
 
 
 def _filter_nonfinite(
@@ -158,7 +121,7 @@ def _filter_nonfinite(
             ValueError,
             TypeError,
         ):
-            warnings.warn(
+            optuna_warn(
                 f"Trial{trial.number}'s target value {repr(value)} could not be cast to float."
             )
             raise

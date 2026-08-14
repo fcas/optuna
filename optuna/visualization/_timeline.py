@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import datetime
 from typing import NamedTuple
+from typing import TYPE_CHECKING
 
 from optuna.logging import get_logger
-from optuna.samplers._base import _CONSTRAINTS_KEY
-from optuna.study import Study
 from optuna.trial import TrialState
 from optuna.visualization._plotly_imports import _imports
 from optuna.visualization._utils import _make_hovertext
+
+
+if TYPE_CHECKING:
+    from optuna.study import Study
 
 
 if _imports.is_successful():
@@ -30,50 +33,30 @@ class _TimelineInfo(NamedTuple):
     bars: list[_TimelineBarInfo]
 
 
-def plot_timeline(study: Study) -> "go.Figure":
+def plot_timeline(study: Study, n_recent_trials: int | None = None) -> "go.Figure":
     """Plot the timeline of a study.
-
-    Example:
-
-        The following code snippet shows how to plot the timeline of a study.
-        Timeline plot can visualize trials with overlapping execution time
-        (e.g., in distributed environments).
-
-        .. plotly::
-
-            import time
-
-            import optuna
-
-
-            def objective(trial):
-                x = trial.suggest_float("x", 0, 1)
-                time.sleep(x * 0.1)
-                if x > 0.8:
-                    raise ValueError()
-                if x > 0.4:
-                    raise optuna.TrialPruned()
-                return x ** 2
-
-
-            study = optuna.create_study(direction="minimize")
-            study.optimize(
-                objective, n_trials=50, n_jobs=2, catch=(ValueError,)
-            )
-
-            fig = optuna.visualization.plot_timeline(study)
-            fig.show()
 
     Args:
         study:
             A :class:`~optuna.study.Study` object whose trials are plotted with
             their lifetime.
+        n_recent_trials:
+            The number of recent trials to plot. If :obj:`None`, all trials are plotted.
+            If specified, only the most recent ``n_recent_trials`` will be displayed.
+            Must be a positive integer.
 
     Returns:
         A :class:`plotly.graph_objects.Figure` object.
+
+    Raises:
+        ValueError: if ``n_recent_trials`` is 0 or negative.
     """
+
+    if n_recent_trials is not None and n_recent_trials <= 0:
+        raise ValueError("n_recent_trials must be a positive integer or None.")
+
     _imports.check()
-    info = _get_timeline_info(study)
+    info = _get_timeline_info(study, n_recent_trials=n_recent_trials)
     return _get_timeline_plot(info)
 
 
@@ -111,23 +94,24 @@ def _is_running_trials_in_study(study: Study, max_run_duration: datetime.timedel
     )
 
 
-def _get_timeline_info(study: Study) -> _TimelineInfo:
+def _get_timeline_info(study: Study, n_recent_trials: int | None = None) -> _TimelineInfo:
     bars = []
 
     max_datetime = _get_max_datetime_complete(study)
     timedelta_for_small_bar = datetime.timedelta(seconds=1)
-    for trial in study.get_trials(deepcopy=False):
+
+    trials = study.get_trials(deepcopy=False)
+    if n_recent_trials is not None:
+        trials = trials[-n_recent_trials:]
+
+    for trial in trials:
         datetime_start = trial.datetime_start or max_datetime
         datetime_complete = (
             max_datetime + timedelta_for_small_bar
             if trial.state == TrialState.RUNNING
             else trial.datetime_complete or datetime_start + timedelta_for_small_bar
         )
-        infeasible = (
-            False
-            if _CONSTRAINTS_KEY not in trial.system_attrs
-            else any([x > 0 for x in trial.system_attrs[_CONSTRAINTS_KEY]])
-        )
+        infeasible = any(x > 0 for x in trial.constraints.values())
         if datetime_complete < datetime_start:
             _logger.warning(
                 (

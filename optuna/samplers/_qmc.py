@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import threading
 from typing import Any
-from typing import Dict
-from typing import Optional
-from typing import Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -15,23 +15,32 @@ from optuna._imports import _LazyImport
 from optuna._transform import _SearchSpaceTransform
 from optuna.distributions import BaseDistribution
 from optuna.distributions import CategoricalDistribution
+from optuna.distributions import FloatDistribution
 from optuna.samplers import BaseSampler
-from optuna.trial import FrozenTrial
+from optuna.samplers._base import _INDEPENDENT_SAMPLING_WARNING_TEMPLATE
 from optuna.trial import TrialState
 
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from optuna.study import Study
+    from optuna.trial import FrozenTrial
 
 
 _logger = logging.get_logger(__name__)
 
 _SUGGESTED_STATES = (TrialState.COMPLETE, TrialState.PRUNED)
+_threading_lock = threading.Lock()
 
 
 @experimental_class("3.0.0")
 class QMCSampler(BaseSampler):
     """A Quasi Monte Carlo Sampler that generates low-discrepancy sequences.
+
+    .. note::
+        This sampler requires ``scipy``.
+        You can install this dependency with ``pip install scipy``.
 
     Quasi Monte Carlo (QMC) sequences are designed to have lower discrepancies than
     standard random sequences. They are known to perform better than the standard
@@ -42,15 +51,11 @@ class QMCSampler(BaseSampler):
 
     - `Bergstra, James, and Yoshua Bengio. Random search for hyper-parameter optimization.
       Journal of machine learning research 13.2, 2012.
-      <https://jmlr.org/papers/v13/bergstra12a.html>`_
+      <https://jmlr.org/papers/v13/bergstra12a.html>`__
 
     We use the QMC implementations in Scipy. For the details of the QMC algorithm,
     see the Scipy API references on `scipy.stats.qmc
-    <https://scipy.github.io/devdocs/reference/stats.qmc.html>`_.
-
-    .. note:
-        If your search space contains categorical parameters, it samples the categorical
-        parameters by its `independent_sampler` without using QMC algorithm.
+    <https://scipy.github.io/devdocs/reference/stats.qmc.html>`__.
 
     .. note::
         The search space of the sampler is determined by either previous trials in the study or
@@ -152,25 +157,20 @@ class QMCSampler(BaseSampler):
         *,
         qmc_type: str = "sobol",
         scramble: bool = False,  # default is False for simplicity in distributed environment.
-        seed: Optional[int] = None,
-        independent_sampler: Optional[BaseSampler] = None,
+        seed: int | None = None,
+        independent_sampler: BaseSampler | None = None,
         warn_asynchronous_seeding: bool = True,
         warn_independent_sampling: bool = True,
     ) -> None:
         self._scramble = scramble
         self._seed = np.random.PCG64().random_raw() if seed is None else seed
         self._independent_sampler = independent_sampler or optuna.samplers.RandomSampler(seed=seed)
-        self._initial_search_space: Optional[Dict[str, BaseDistribution]] = None
         self._warn_independent_sampling = warn_independent_sampling
 
         if qmc_type in ("halton", "sobol"):
             self._qmc_type = qmc_type
         else:
-            message = (
-                f'The `qmc_type`, "{qmc_type}", is not a valid. '
-                'It must be one of "halton" and "sobol".'
-            )
-            raise ValueError(message)
+            raise ValueError(f"The `{qmc_type=}` is invalid. Choose either `halton` or `sobol`.")
 
         if seed is None and scramble and warn_asynchronous_seeding:
             # Sobol/Halton sequences without scrambling do not use seed.
@@ -186,28 +186,39 @@ class QMCSampler(BaseSampler):
 
     def infer_relative_search_space(
         self, study: Study, trial: FrozenTrial
-    ) -> Dict[str, BaseDistribution]:
-        if self._initial_search_space is not None:
-            return self._initial_search_space
-
+    ) -> dict[str, BaseDistribution]:
         past_trials = study._get_trials(deepcopy=False, states=_SUGGESTED_STATES, use_cache=True)
         # The initial trial is sampled by the independent sampler.
         if len(past_trials) == 0:
-            return {}
+            pending_trials = study._get_trials(
+                deepcopy=False, states=(TrialState.RUNNING,), use_cache=True
+            )
+            if len(pending_trials) == 0:
+                return {}
+
+            union_search_space: dict[str, BaseDistribution] = {}
+            intersection_keys: set[str] | None = None
+            for t in pending_trials:
+                space = dict(t.distributions)
+                union_search_space.update(space)
+                if intersection_keys is None:
+                    intersection_keys = set(space.keys())
+                elif len(space.keys()):
+                    intersection_keys &= space.keys()
+
+            if intersection_keys is not None and intersection_keys != set(
+                union_search_space.keys()
+            ):
+                _logger.warning(
+                    "`QMCSampler` assumes that the search space does not include any conditions. "
+                    "Please make sure the provided search space is non-conditional."
+                )
+            return union_search_space
+
         # If an initial trial was already made,
         # construct search_space of this sampler from the initial trial.
         first_trial = min(past_trials, key=lambda t: t.number)
-        self._initial_search_space = self._infer_initial_search_space(first_trial)
-        return self._initial_search_space
-
-    def _infer_initial_search_space(self, trial: FrozenTrial) -> Dict[str, BaseDistribution]:
-        search_space: Dict[str, BaseDistribution] = {}
-        for param_name, distribution in trial.distributions.items():
-            if isinstance(distribution, CategoricalDistribution):
-                continue
-            search_space[param_name] = distribution
-
-        return search_space
+        return dict(first_trial.distributions)
 
     @staticmethod
     def _log_asynchronous_seeding() -> None:
@@ -219,14 +230,16 @@ class QMCSampler(BaseSampler):
         )
 
     def _log_independent_sampling(self, trial: FrozenTrial, param_name: str) -> None:
+        # NOTE(nabenabe): We can extend `QMCSampler` to dynamic search space as well by using the
+        # same mechanism as `group` by TPE.
         _logger.warning(
-            f"The parameter '{param_name}' in trial#{trial.number} is sampled independently "
-            f"by using `{self._independent_sampler.__class__.__name__}` instead of `QMCSampler` "
-            "(optimization performance may be degraded). "
-            "`QMCSampler` does not support dynamic search space or `CategoricalDistribution`. "
-            "You can suppress this warning by setting `warn_independent_sampling` "
-            "to `False` in the constructor of `QMCSampler`, "
-            "if this independent sampling is intended behavior."
+            _INDEPENDENT_SAMPLING_WARNING_TEMPLATE.format(
+                param_name=param_name,
+                trial_number=trial.number,
+                independent_sampler_name=self._independent_sampler.__class__.__name__,
+                sampler_name=self.__class__.__name__,
+                fallback_reason="dynamic search space is not supported by `QMCSampler`",
+            )
         )
 
     def sample_independent(
@@ -236,7 +249,7 @@ class QMCSampler(BaseSampler):
         param_name: str,
         param_distribution: BaseDistribution,
     ) -> Any:
-        if self._initial_search_space is not None:
+        if len(study._get_trials(deepcopy=False, states=_SUGGESTED_STATES, use_cache=True)):
             if self._warn_independent_sampling:
                 self._log_independent_sampling(trial, param_name)
 
@@ -245,15 +258,34 @@ class QMCSampler(BaseSampler):
         )
 
     def sample_relative(
-        self, study: Study, trial: FrozenTrial, search_space: Dict[str, BaseDistribution]
-    ) -> Dict[str, Any]:
+        self, study: Study, trial: FrozenTrial, search_space: dict[str, BaseDistribution]
+    ) -> dict[str, Any]:
         if search_space == {}:
             return {}
 
-        sample = self._sample_qmc(study, search_space)
-        trans = _SearchSpaceTransform(search_space)
-        sample = trans.bounds[:, 0] + sample * (trans.bounds[:, 1] - trans.bounds[:, 0])
-        return trans.untransform(sample[0, :])
+        categorical_space = {
+            name: dist
+            for name, dist in search_space.items()
+            if isinstance(dist, CategoricalDistribution)
+        }
+        # Map each categorical parameter to FloatDistribution(0, C) so it takes one QMC
+        # coordinate in [0, C). Flooring that with int() gives a uniform choice index in
+        # [0, C - 1]; it never reaches C because the engines emit values in [0, 1). Going through
+        # IntDistribution instead would round to nearest and reintroduce a bin-boundary bias.
+        pseudo_categorical_space = {
+            name: FloatDistribution(0, len(dist.choices))
+            for name, dist in categorical_space.items()
+        }
+        trans = _SearchSpaceTransform(search_space | pseudo_categorical_space, transform_0_1=True)
+        sample = trans.untransform(self._sample_qmc(study, search_space)[0])
+        return {
+            name: (
+                dist.to_external_repr(int(value))
+                if (dist := categorical_space.get(name)) is not None
+                else value
+            )
+            for name, value in sample.items()
+        }
 
     def before_trial(self, study: Study, trial: FrozenTrial) -> None:
         self._independent_sampler.before_trial(study, trial)
@@ -261,23 +293,27 @@ class QMCSampler(BaseSampler):
     def after_trial(
         self,
         study: Study,
-        trial: "optuna.trial.FrozenTrial",
+        trial: FrozenTrial,
         state: TrialState,
-        values: Optional[Sequence[float]],
+        values: Sequence[float] | None,
     ) -> None:
         self._independent_sampler.after_trial(study, trial, state, values)
 
-    def _sample_qmc(self, study: Study, search_space: Dict[str, BaseDistribution]) -> np.ndarray:
+    def _sample_qmc(self, study: Study, search_space: dict[str, BaseDistribution]) -> np.ndarray:
         # Lazy import because the `scipy.stats.qmc` is slow to import.
         qmc_module = _LazyImport("scipy.stats.qmc")
 
-        sample_id = self._find_sample_id(study)
+        sample_id = self._find_sample_id(study, search_space)
         d = len(search_space)
 
         if self._qmc_type == "halton":
             qmc_engine = qmc_module.Halton(d, seed=self._seed, scramble=self._scramble)
         elif self._qmc_type == "sobol":
-            qmc_engine = qmc_module.Sobol(d, seed=self._seed, scramble=self._scramble)
+            # Sobol engine likely shares its internal state among threads.
+            # Without threading.Lock, ValueError exceptions are raised in Sobol engine as discussed
+            # in https://github.com/optuna/optunahub-registry/pull/168#pullrequestreview-2404054969
+            with _threading_lock:
+                qmc_engine = qmc_module.Sobol(d, seed=self._seed, scramble=self._scramble)
         else:
             raise ValueError("Invalid `qmc_type`")
 
@@ -290,25 +326,22 @@ class QMCSampler(BaseSampler):
 
         return sample
 
-    def _find_sample_id(self, study: Study) -> int:
-        qmc_id = ""
-        qmc_id += self._qmc_type
+    def _find_sample_id(self, study: Study, search_space: dict[str, BaseDistribution]) -> int:
+        # Sort by keys to make the order static.
+        search_space_str = {
+            param_name: str(dist) for param_name, dist in sorted(search_space.items())
+        }
+        qmc_vars: dict[str, Any] = {"qmc_type": self._qmc_type, "search_space": search_space_str}
         # Sobol/Halton sequences without scrambling do not use seed.
         if self._scramble:
-            qmc_id += f" (scramble=True, seed={self._seed})"
+            qmc_vars.update(scramble=True, seed=self._seed)
         else:
-            qmc_id += " (scramble=False)"
-        key_qmc_id = qmc_id + "'s last sample id"
+            qmc_vars.update(scramble=False)
 
+        key_qmc_id = "qmc:" + hashlib.sha256(json.dumps(qmc_vars).encode()).hexdigest()
         # TODO(kstoneriv3): Here, we ideally assume that the following block is
         # an atomic transaction. Without such an assumption, the current implementation
         # only ensures that each `sample_id` is sampled at least once.
-        system_attrs = study._storage.get_study_system_attrs(study._study_id)
-        if key_qmc_id in system_attrs.keys():
-            sample_id = system_attrs[key_qmc_id]
-            sample_id += 1
-        else:
-            sample_id = 0
+        sample_id = study._storage.get_study_system_attrs(study._study_id).get(key_qmc_id, -1) + 1
         study._storage.set_study_system_attr(study._study_id, key_qmc_id, sample_id)
-
         return sample_id

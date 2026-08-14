@@ -3,16 +3,30 @@
 optuna.samplers.nsgaii
 ======================
 
-The :mod:`~optuna.samplers.nsgaii` module defines crossover operations used by :class:`~optuna.samplers.NSGAIISampler`.
+The :mod:`~optuna.samplers.nsgaii` module defines crossover and mutation operations used by
+:class:`~optuna.samplers.NSGAIISampler` and :class:`~optuna.samplers.NSGAIIISampler`.
+
+Crossover
+---------
 
 .. autosummary::
     :toctree: generated/
     :nosignatures:
 
-    optuna.samplers.nsgaii.BaseCrossover
-    optuna.samplers.nsgaii.UniformCrossover
-    optuna.samplers.nsgaii.BLXAlphaCrossover
-    optuna.samplers.nsgaii.SPXCrossover
-    optuna.samplers.nsgaii.SBXCrossover
-    optuna.samplers.nsgaii.VSBXCrossover
-    optuna.samplers.nsgaii.UNDXCrossover
+    BaseCrossover
+    UniformCrossover
+    BLXAlphaCrossover
+    SPXCrossover
+    SBXCrossover
+    VSBXCrossover
+    UNDXCrossover
+
+Mutation
+--------
+
+.. autosummary::
+    :toctree: generated/
+    :nosignatures:
+
+    BaseMutation
+    PolynomialMutation

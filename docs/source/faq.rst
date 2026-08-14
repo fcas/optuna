@@ -8,7 +8,7 @@ Can I use Optuna with X? (where X is your favorite ML library)
 --------------------------------------------------------------
 
 Optuna is compatible with most ML libraries, and it's easy to use Optuna with those.
-Please refer to `examples <https://github.com/optuna/optuna-examples/>`_.
+Please refer to `examples <https://github.com/optuna/optuna-examples/>`__.
 
 
 .. _objective-func-additional-args:
@@ -63,7 +63,7 @@ Below is an example that uses ``lambda``:
     study = optuna.create_study()
     study.optimize(lambda trial: objective(trial, min_x, max_x), n_trials=100)
 
-Please also refer to `sklearn_additional_args.py <https://github.com/optuna/optuna-examples/tree/main/sklearn/sklearn_additional_args.py>`_ example,
+Please also refer to `sklearn_additional_args.py <https://github.com/optuna/optuna-examples/tree/main/sklearn/sklearn_additional_args.py>`__ example,
 which reuses the dataset instead of loading it in each trial execution.
 
 
@@ -72,7 +72,7 @@ Can I use Optuna without remote RDB servers?
 
 Yes, it's possible.
 
-In the simplest form, Optuna works with in-memory storage:
+In the simplest form, Optuna works with :class:`~optuna.storages.InMemoryStorage`:
 
 .. code-block:: python
 
@@ -94,7 +94,7 @@ How can I save and resume studies?
 ----------------------------------------------------
 
 There are two ways of persisting studies, which depend if you are using
-in-memory storage (default) or remote databases (RDB). In-memory studies can be
+:class:`~optuna.storages.InMemoryStorage` (default) or remote databases (RDB). In-memory studies can be
 saved and loaded like usual Python objects using ``pickle`` or ``joblib``. For
 example, using ``joblib``:
 
@@ -116,7 +116,7 @@ And to resume the study:
 
 Note that Optuna does not support saving/reloading across different Optuna
 versions with ``pickle``. To save/reload a study across different Optuna versions,
-please use RDBs and `upgrade storage schema <reference/cli.html#storage-upgrade>`_
+please use RDBs and `upgrade storage schema <reference/cli.html#storage-upgrade>`__
 if necessary. If you are using RDBs, see :ref:`rdb` for more details.
 
 How to suppress log messages of Optuna?
@@ -142,34 +142,54 @@ Please refer to :class:`optuna.logging` for further details.
 How to save machine learning models trained in objective functions?
 -------------------------------------------------------------------
 
-Optuna saves hyperparameter values with its corresponding objective value to storage,
+Optuna saves hyperparameter values with their corresponding objective values to storage,
 but it discards intermediate objects such as machine learning models and neural network weights.
-To save models or weights, please use features of the machine learning library you used.
 
-We recommend saving :obj:`optuna.trial.Trial.number` with a model in order to identify its corresponding trial.
-For example, you can save SVM models trained in the objective function as follows:
+To save models or weights, we recommend utilizing Optuna's built-in ``ArtifactStore``.
+For example, you can use the :func:`~optuna.artifacts.upload_artifact` as follows:
 
 .. code-block:: python
+
+    base_path = "./artifacts"
+    os.makedirs(base_path, exist_ok=True)
+    artifact_store = optuna.artifacts.FileSystemArtifactStore(base_path=base_path)
 
     def objective(trial):
         svc_c = trial.suggest_float("svc_c", 1e-10, 1e10, log=True)
         clf = sklearn.svm.SVC(C=svc_c)
         clf.fit(X_train, y_train)
 
-        # Save a trained model to a file.
-        with open("{}.pickle".format(trial.number), "wb") as fout:
+        # Save the model using ArtifactStore
+        with open("model.pickle", "wb") as fout:
             pickle.dump(clf, fout)
+        artifact_id = optuna.artifacts.upload_artifact(
+            artifact_store=artifact_store,
+            file_path="model.pickle",
+            study_or_trial=trial.study,
+        )
+        trial.set_user_attr("artifact_id", artifact_id)
         return 1.0 - accuracy_score(y_valid, clf.predict(X_valid))
-
 
     study = optuna.create_study()
     study.optimize(objective, n_trials=100)
 
-    # Load the best model.
-    with open("{}.pickle".format(study.best_trial.number), "rb") as fin:
-        best_clf = pickle.load(fin)
-    print(accuracy_score(y_valid, best_clf.predict(X_valid)))
+To retrieve models or weights, you can list and download them using :func:`~optuna.artifacts.get_all_artifact_meta` and :func:`~optuna.artifacts.download_artifact` as shown below:
 
+.. code-block:: python
+
+    # List all models
+    for artifact_meta in optuna.artifacts.get_all_artifact_meta(study_or_trial=study):
+        print(artifact_meta)
+    # Download the best model
+    trial = study.best_trial
+    best_artifact_id = trial.user_attrs["artifact_id"]
+    optuna.artifacts.download_artifact(
+        artifact_store=artifact_store,
+        file_path='best_model.pickle',
+        artifact_id=best_artifact_id,
+    )
+
+For a more comprehensive guide, refer to the `ArtifactStore tutorial <https://optuna.readthedocs.io/en/stable/tutorial/20_recipes/012_artifact_tutorial.html>`_.
 
 How can I obtain reproducible optimization results?
 ---------------------------------------------------
@@ -181,6 +201,9 @@ To make the parameters suggested by Optuna reproducible, you can specify a fixed
     sampler = TPESampler(seed=10)  # Make the sampler behave in a deterministic way.
     study = optuna.create_study(sampler=sampler)
     study.optimize(objective)
+
+To make the pruning by :class:`~optuna.pruners.HyperbandPruner` reproducible, please specify a fixed ``study_name`` of :class:`~optuna.study.Study` in addition to the ``seed`` argument.
+
 
 However, there are two caveats.
 
@@ -274,7 +297,7 @@ If your optimization target supports GPU (CUDA) acceleration and you want to spe
     $ export CUDA_VISIBLE_DEVICES=1
     $ python main.py
 
-Please refer to `CUDA C Programming Guide <https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#env-vars>`_ for further details.
+Please refer to `CUDA C Programming Guide <https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#env-vars>`__ for further details.
 
 
 How can I test my objective functions?
@@ -363,11 +386,7 @@ Here's an example:
         if previous_best_value != study.best_value:
             study.set_user_attr("previous_best_value", study.best_value)
             print(
-                "Trial {} finished with best value: {} and parameters: {}. ".format(
-                frozen_trial.number,
-                frozen_trial.value,
-                frozen_trial.params,
-                )
+                f"Trial {frozen_trial.number} finished with best value: {frozen_trial.value} and parameters: {frozen_trial.params}. "
             )
 
 
@@ -382,7 +401,7 @@ How do I suggest variables which represent the proportion, that is, are in accor
 
 When you want to suggest :math:`n` variables which represent the proportion, that is, :math:`p[0], p[1], ..., p[n-1]` which satisfy :math:`0 \le p[k] \le 1` for any :math:`k` and :math:`p[0] + p[1] + ... + p[n-1] = 1`, try the below.
 For example, these variables can be used as weights when interpolating the loss functions.
-These variables are in accordance with the flat `Dirichlet distribution <https://en.wikipedia.org/wiki/Dirichlet_distribution>`_.
+These variables are in accordance with the flat `Dirichlet distribution <https://en.wikipedia.org/wiki/Dirichlet_distribution>`__.
 
 .. code-block:: python
 
@@ -433,7 +452,8 @@ You can verify the transformation by calculating the elements of the Jacobian.
 How can I optimize a model with some constraints?
 -------------------------------------------------
 
-When you want to optimize a model with constraints, you can use the following classes: :class:`~optuna.samplers.TPESampler`, :class:`~optuna.samplers.NSGAIISampler` or `BoTorchSampler <https://optuna-integration.readthedocs.io/en/stable/reference/generated/optuna_integration.BoTorchSampler.html>`_.
+When you want to optimize a model with constraints, you can use the following classes: :class:`~optuna.samplers.TPESampler`, :class:`~optuna.samplers.NSGAIISampler`, :class:`~optuna.samplers.NSGAIIISampler`,  :class:`~optuna.samplers.GPSampler` or `BoTorchSampler <https://optuna-integration.readthedocs.io/en/stable/reference/generated/optuna_integration.BoTorchSampler.html>`__.
+Note that `AutoSampler <https://hub.optuna.org/samplers/auto_sampler/>`__ can also handle constraints.
 The following example is a benchmark of Binh and Korn function, a multi-objective optimization, with constraints using :class:`~optuna.samplers.NSGAIISampler`. This one has two constraints :math:`c_0 = (x-5)^2 + y^2 - 25 \le 0` and :math:`c_1 = -(x - 8)^2 - (y + 3)^2 + 7.7 \le 0` and finds the optimal solution satisfying these constraints.
 
 
@@ -453,8 +473,9 @@ The following example is a benchmark of Binh and Korn function, a multi-objectiv
         c0 = (x - 5) ** 2 + y ** 2 - 25
         c1 = -((x - 8) ** 2) - (y + 3) ** 2 + 7.7
 
-        # Store the constraints as user attributes so that they can be restored after optimization.
-        trial.set_user_attr("constraint", (c0, c1))
+        # Set constraints
+        trial.set_constraint("c0", c0)
+        trial.set_constraint("c1", c1)
 
         v0 = 4 * x ** 2 + 4 * y ** 2
         v1 = (x - 5) ** 2 + (y - 5) ** 2
@@ -462,11 +483,7 @@ The following example is a benchmark of Binh and Korn function, a multi-objectiv
         return v0, v1
 
 
-    def constraints(trial):
-        return trial.user_attrs["constraint"]
-
-
-    sampler = optuna.samplers.NSGAIISampler(constraints_func=constraints)
+    sampler = optuna.samplers.NSGAIISampler()
     study = optuna.create_study(
         directions=["minimize", "minimize"],
         sampler=sampler,
@@ -480,15 +497,13 @@ The following example is a benchmark of Binh and Korn function, a multi-objectiv
     trials = sorted(study.best_trials, key=lambda t: t.values)
 
     for trial in trials:
-        print("  Trial#{}".format(trial.number))
+        print(f"  Trial#{trial.number}")
         print(
-            "    Values: Values={}, Constraint={}".format(
-                trial.values, trial.user_attrs["constraint"][0]
-            )
+            f"    Values: Values={trial.values}, Constraint={trial.constraints}"
         )
-        print("    Params: {}".format(trial.params))
+        print(f"    Params: {trial.params}")
 
-If you are interested in an example for `BoTorchSampler <https://optuna-integration.readthedocs.io/en/stable/reference/generated/optuna_integration.BoTorchSampler.html>`_, please refer to `this sample code <https://github.com/optuna/optuna-examples/blob/main/multi_objective/botorch_simple.py>`_.
+If you are interested in an example for `BoTorchSampler <https://optuna-integration.readthedocs.io/en/stable/reference/generated/optuna_integration.BoTorchSampler.html>`__, please refer to `this sample code <https://github.com/optuna/optuna-examples/blob/main/multi_objective/botorch_simple.py>`__.
 
 
 There are two kinds of constrained optimizations, one with soft constraints and the other with hard constraints.
@@ -520,7 +535,7 @@ For more information about 1., see APIReference_.
 2. Multi-processing parallelization with single node
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-This can be achieved by using :class:`~optuna.storages.JournalFileStorage` or client/server RDBs (such as PostgreSQL and MySQL).
+This can be achieved by using :class:`~optuna.storages.journal.JournalFileBackend` or client/server RDBs (such as PostgreSQL and MySQL).
 
 For more information about 2., see TutorialEasyParallelization_.
 
@@ -541,25 +556,27 @@ How can I solve the error that occurs when performing parallel optimization with
 
 We would never recommend SQLite3 for parallel optimization in the following reasons.
 
-- To concurrently evaluate trials enqueued by :func:`~optuna.study.Study.enqueue_trial`, :class:`~optuna.storages.RDBStorage` uses `SELECT ... FOR UPDATE` syntax, which is unsupported in `SQLite3 <https://github.com/sqlalchemy/sqlalchemy/blob/rel_1_4_41/lib/sqlalchemy/dialects/sqlite/base.py#L1265-L1267>`_.
-- As described in `the SQLAlchemy's documentation <https://docs.sqlalchemy.org/en/14/dialects/sqlite.html#sqlite-concurrency>`_,
+- To concurrently evaluate trials enqueued by :func:`~optuna.study.Study.enqueue_trial`, :class:`~optuna.storages.RDBStorage` uses `SELECT ... FOR UPDATE` syntax, which is unsupported in `SQLite3 <https://github.com/sqlalchemy/sqlalchemy/blob/rel_1_4_41/lib/sqlalchemy/dialects/sqlite/base.py#L1265-L1267>`__.
+- As described in `the SQLAlchemy's documentation <https://docs.sqlalchemy.org/en/14/dialects/sqlite.html#sqlite-concurrency>`__,
   SQLite3 (and pysqlite driver) does not support a high level of concurrency.
   You may get a "database is locked" error, which occurs when one thread or process has an exclusive lock on a database connection (in reality a file handle) and another thread times out waiting for the lock to be released.
-  You can increase the default `timeout <https://docs.python.org/3/library/sqlite3.html#sqlite3.connect>`_ value like `optuna.storages.RDBStorage("sqlite:///example.db", engine_kwargs={"connect_args": {"timeout": 20.0}})` though.
-- For distributed optimization via NFS, SQLite3 does not work as described at `FAQ section of sqlite.org <https://www.sqlite.org/faq.html#q5>`_.
+  You can increase the default `timeout <https://docs.python.org/3/library/sqlite3.html#sqlite3.connect>`__ value like `optuna.storages.RDBStorage("sqlite:///example.db", engine_kwargs={"connect_args": {"timeout": 20.0}})` though.
+- For distributed optimization via NFS, SQLite3 does not work as described at `FAQ section of sqlite.org <https://www.sqlite.org/faq.html#q5>`__.
 
-If you want to use a file-based Optuna storage for these scenarios, please consider using :class:`~optuna.storages.JournalFileStorage` instead.
+If you want to use a file-based Optuna storage for these scenarios, please consider using :class:`~optuna.storages.journal.JournalFileBackend` instead.
 
 .. code-block:: python
 
    import optuna
-   from optuna.storages import JournalStorage, JournalFileStorage
+   from optuna.storages import JournalStorage
+   from optuna.storages.journal import JournalFileBackend
 
-   storage = JournalStorage(JournalFileStorage("optuna-journal.log"))
+   storage = JournalStorage(JournalFileBackend("optuna_journal_storage.log"))
+
    study = optuna.create_study(storage=storage)
    ...
 
-See `the Medium blog post <https://medium.com/optuna/distributed-optimization-via-nfs-using-optunas-new-operation-based-logging-storage-9815f9c3f932>`_ for details.
+See `the Medium blog post <https://medium.com/optuna/distributed-optimization-via-nfs-using-optunas-new-operation-based-logging-storage-9815f9c3f932>`__ for details.
 
 .. _heartbeat_monitoring:
 
@@ -572,7 +589,7 @@ Can I monitor trials and make them failed automatically when they are killed une
 
 A process running a trial could be killed unexpectedly, typically by a job scheduler in a cluster environment.
 If trials are killed unexpectedly, they will be left on the storage with their states `RUNNING` until we remove them or update their state manually.
-For such a case, Optuna supports monitoring trials using `heartbeat <https://en.wikipedia.org/wiki/Heartbeat_(computing)>`_ mechanism.
+For such a case, Optuna supports monitoring trials using `heartbeat <https://en.wikipedia.org/wiki/Heartbeat_(computing)>`__ mechanism.
 Using heartbeat, if a process running a trial is killed unexpectedly,
 Optuna will automatically change the state of the trial that was running on that process to :obj:`~optuna.trial.TrialState.FAIL`
 from :obj:`~optuna.trial.TrialState.RUNNING`.
@@ -593,25 +610,41 @@ from :obj:`~optuna.trial.TrialState.RUNNING`.
 
 .. note::
 
-  The heartbeat is supposed to be used with :meth:`~optuna.study.Study.optimize`. If you use :meth:`~optuna.study.Study.ask` and
-  :meth:`~optuna.study.Study.tell`, please change the state of the killed trials by calling :meth:`~optuna.study.Study.tell`
-  explicitly.
+    The heartbeat is supposed to be used with :meth:`~optuna.study.Study.optimize`. If you use :meth:`~optuna.study.Study.ask` and
+    :meth:`~optuna.study.Study.tell`, please change the state of the killed trials by calling :meth:`~optuna.study.Study.tell`
+    explicitly.
 
-You can also execute a callback function to process the failed trial.
-Optuna provides a callback to retry failed trials as :class:`~optuna.storages.RetryFailedTrialCallback`.
-Note that a callback is invoked at a beginning of each trial, which means :class:`~optuna.storages.RetryFailedTrialCallback`
-will retry failed trials when a new trial starts to evaluate.
+    .. code-block:: python
+        
+        from datetime import datetime
+
+        import optuna
+
+        study = optuna.create_study(storage=...)
+        # User needs to tweak here. For example, the case below assumes that if trial is running
+        # for 1 day, this trial is probably a zombie.
+        grace_period = 3600*24
+        for t in study.get_trials(states=[optuna.trial.TrialState.RUNNING]):
+            if (datetime.now() - t.datetime_start).total_seconds() > grace_period:
+                study.tell(t, state=optuna.trial.TrialState.FAIL)
+
+You can also execute a callback function to process heartbeat-stale trials.
+Optuna provides a callback to retry heartbeat-stale trials as
+:class:`~optuna.storages.RetryHeartbeatStaleTrialCallback`. Note that a callback is invoked at
+the beginning of each trial, which means
+:class:`~optuna.storages.RetryHeartbeatStaleTrialCallback` will retry heartbeat-stale trials when
+a new trial starts to evaluate.
 
 .. code-block:: python
 
     import optuna
-    from optuna.storages import RetryFailedTrialCallback
+    from optuna.storages import RetryHeartbeatStaleTrialCallback
 
     storage = optuna.storages.RDBStorage(
         url="sqlite:///:memory:",
         heartbeat_interval=60,
         grace_period=120,
-        failed_trial_callback=RetryFailedTrialCallback(max_retry=3),
+        heartbeat_stale_trial_callback=RetryHeartbeatStaleTrialCallback(max_retry=3),
     )
 
     study = optuna.create_study(storage=storage)
@@ -622,7 +655,7 @@ How can I deal with permutation as a parameter?
 
 Although it is not straightforward to deal with combinatorial search spaces like permutations with existing API, there exists a convenient technique for handling them.
 It involves re-parametrization of permutation search space of :math:`n` items as an independent :math:`n`-dimensional integer search space.
-This technique is based on the concept of `Lehmer code <https://en.wikipedia.org/wiki/Lehmer_code>`_.
+This technique is based on the concept of `Lehmer code <https://en.wikipedia.org/wiki/Lehmer_code>`__.
 
 A Lehmer code of a sequence is the sequence of integers in the same size, whose :math:`i`-th entry denotes how many inversions the :math:`i`-th entry of the permutation has after itself.
 In other words, the :math:`i`-th entry of the Lehmer code represents the number of entries that are located after and are smaller than the :math:`i`-th entry of the original sequence.
@@ -714,3 +747,74 @@ Optuna may sometimes suggest parameters evaluated in the past and if you would l
 
     study = optuna.create_study()
     study.optimize(objective, n_trials=100)
+
+.. _remove_for_artifact_store:
+
+How can I delete all the artifacts uploaded to a study?
+-------------------------------------------------------
+
+Optuna supports :mod:`~optuna.artifacts` for large data storage during an optimization.
+After you conduct enormous amount of experiments, you may want to remove the artifacts stored during optimizations.
+
+We strongly recommend to create a new directory or bucket for each study so that all the artifacts linked to a study can be entirely removed by deleting the directory or the bucket.
+
+However, if it is necessary to remove artifacts from a Python script, users can use the following code:
+
+.. warning::
+
+    :func:`~optuna.study.Study.add_trial` and :meth:`~optuna.study.copy_study` do not copy artifact files linked to :class:`~optuna.study.Study` or :class:`~optuna.trial.Trial`.
+    Please make sure **NOT** to delete the artifacts from the source study or trial.
+    Failing to do so may lead to unexpected behaviors as Optuna does not guarantee expected behaviors when users call :meth:`remove` externally.
+    Due to the Optuna software design, it is hard to officially support the delete feature and we are not planning to support this feature in the future either.
+
+.. code-block:: python
+
+    from optuna.artifacts import get_all_artifact_meta
+
+
+    def remove_artifacts(study, artifact_store):
+        # NOTE: ``artifact_store.remove`` is discouraged to use because it is an internal feature.
+        storage = study._storage
+        for trial in study.trials:
+            for artifact_meta in get_all_artifact_meta(trial, storage=storage):
+                # For each trial, remove the artifacts uploaded to ``base_path``.
+                artifact_store.remove(artifact_meta.artifact_id)
+
+        for artifact_meta in get_all_artifact_meta(study):
+            # Remove the artifacts uploaded to ``base_path``.
+            artifact_store.remove(artifact_meta.artifact_id)
+
+Can I specify parameter starting points before optimization?
+------------------------------------------------------------
+
+Yes, it's possible.
+
+For a more comprehensive guide, refer to the `Specify Hyperparameters Manually <https://optuna.readthedocs.io/en/stable/tutorial/20_recipes/008_specify_params.html>`_.
+
+How can I resolve case sensitivity issues with MySQL?
+-----------------------------------------------------
+
+By default, MySQL performs case-insensitive string comparisons.
+However, Optuna treats strings in a case-sensitive manner, leading to conflicts in MySQL if parameter names differ only by case.
+
+For example,
+
+.. code-block:: python
+
+    def objective(trial):
+        a = trial.suggest_int("a", 0, 10)
+        A = trial.suggest_int("A", 0, 10)
+        return a + A
+
+In this case, Optuna treats `a` and `A` distinctively while MySQL does not due to its default collation settings.
+As a result, only one of the parameters will be registered in MySQL.
+
+The following workarounds should be considered:
+
+1. Use a different storage backend.
+    Please consider using PostgreSQL or SQLite, which supports case-sensitive handling.
+2. Rename the parameters to avoid case conflicts.
+    For example, use `a` and `b` instead of `a` and `A`.
+3. Change MySQL’s collation settings to be case-sensitive.
+    You can configure case sensitivity at the database, table, or column level.
+    We defer to `the MySQL documentation <https://dev.mysql.com/doc/refman/9.3/en/charset-syntax.html>`__ for more details.

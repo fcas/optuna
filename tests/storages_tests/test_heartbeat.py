@@ -1,8 +1,9 @@
+from __future__ import annotations
+
 import itertools
 import multiprocessing
 import time
 from typing import Any
-from typing import Optional
 from unittest.mock import Mock
 from unittest.mock import patch
 import warnings
@@ -11,8 +12,9 @@ import pytest
 
 import optuna
 from optuna import Study
-from optuna._callbacks import RetryFailedTrialCallback
+from optuna.exceptions import ExperimentalWarning
 from optuna.storages import RDBStorage
+from optuna.storages._callbacks import RetryHeartbeatStaleTrialCallback
 from optuna.storages._heartbeat import BaseHeartbeat
 from optuna.storages._heartbeat import is_heartbeat_enabled
 from optuna.testing.storages import STORAGE_MODES_HEARTBEAT
@@ -20,6 +22,25 @@ from optuna.testing.storages import StorageSupplier
 from optuna.testing.threading import _TestableThread
 from optuna.trial import FrozenTrial
 from optuna.trial import TrialState
+
+
+@pytest.mark.parametrize("storage_mode", STORAGE_MODES_HEARTBEAT)
+def test_repeatedly_called_record_heartbeat(storage_mode: str) -> None:
+    heartbeat_interval = 1
+    grace_period = 2
+
+    with StorageSupplier(
+        storage_mode, heartbeat_interval=heartbeat_interval, grace_period=grace_period
+    ) as storage:
+        assert is_heartbeat_enabled(storage)
+        assert isinstance(storage, BaseHeartbeat)
+
+        study1 = optuna.create_study(storage=storage)
+
+        with pytest.warns(UserWarning):
+            trial1 = study1.ask()
+        storage.record_heartbeat(trial1._trial_id)
+        storage.record_heartbeat(trial1._trial_id)
 
 
 @pytest.mark.parametrize("storage_mode", STORAGE_MODES_HEARTBEAT)
@@ -66,21 +87,35 @@ def test_invalid_heartbeat_interval_and_grace_period(storage_mode: str) -> None:
 
 
 @pytest.mark.parametrize("storage_mode", STORAGE_MODES_HEARTBEAT)
-def test_failed_trial_callback(storage_mode: str) -> None:
+def test_heartbeat_experimental_warnings(storage_mode: str) -> None:
+    with pytest.warns(ExperimentalWarning, match="heartbeat_interval") as record:
+        with StorageSupplier(storage_mode, heartbeat_interval=2) as storage:
+            study = optuna.create_study(storage=storage)
+            study.optimize(lambda _: 1.0, n_trials=1)
+
+    # Check other ExperimentalWarning related to heartbeat are not raised.
+    assert (
+        len([warning for warning in record if isinstance(warning.message, ExperimentalWarning)])
+        == 1
+    )
+
+
+@pytest.mark.parametrize("storage_mode", STORAGE_MODES_HEARTBEAT)
+def test_heartbeat_stale_trial_callback(storage_mode: str) -> None:
     heartbeat_interval = 1
     grace_period = 2
 
-    def _failed_trial_callback(study: Study, trial: FrozenTrial) -> None:
+    def _heartbeat_stale_trial_callback(study: Study, trial: FrozenTrial) -> None:
         assert study._storage.get_study_system_attrs(study._study_id)["test"] == "A"
         assert trial.system_attrs["test"] == "B"
 
-    failed_trial_callback = Mock(wraps=_failed_trial_callback)
+    heartbeat_stale_trial_callback = Mock(wraps=_heartbeat_stale_trial_callback)
 
     with StorageSupplier(
         storage_mode,
         heartbeat_interval=heartbeat_interval,
         grace_period=grace_period,
-        failed_trial_callback=failed_trial_callback,
+        heartbeat_stale_trial_callback=heartbeat_stale_trial_callback,
     ) as storage:
         assert is_heartbeat_enabled(storage)
         assert isinstance(storage, BaseHeartbeat)
@@ -97,13 +132,13 @@ def test_failed_trial_callback(storage_mode: str) -> None:
         # Exceptions raised in spawned threads are caught by `_TestableThread`.
         with patch("optuna.storages._heartbeat.Thread", _TestableThread):
             study.optimize(lambda _: 1.0, n_trials=1)
-            failed_trial_callback.assert_called_once()
+            heartbeat_stale_trial_callback.assert_called_once()
 
 
 @pytest.mark.parametrize(
     "storage_mode,max_retry", itertools.product(STORAGE_MODES_HEARTBEAT, [None, 0, 1])
 )
-def test_retry_failed_trial_callback(storage_mode: str, max_retry: Optional[int]) -> None:
+def test_retry_heartbeat_stale_trial_callback(storage_mode: str, max_retry: int | None) -> None:
     heartbeat_interval = 1
     grace_period = 2
 
@@ -111,7 +146,7 @@ def test_retry_failed_trial_callback(storage_mode: str, max_retry: Optional[int]
         storage_mode,
         heartbeat_interval=heartbeat_interval,
         grace_period=grace_period,
-        failed_trial_callback=RetryFailedTrialCallback(max_retry=max_retry),
+        heartbeat_stale_trial_callback=RetryHeartbeatStaleTrialCallback(max_retry=max_retry),
     ) as storage:
         assert is_heartbeat_enabled(storage)
         assert isinstance(storage, BaseHeartbeat)
@@ -133,7 +168,7 @@ def test_retry_failed_trial_callback(storage_mode: str, max_retry: Optional[int]
         # Test max_retry=None to see if trial is retried.
         # Test max_retry=0 to see if no trials are retried.
         # Test max_retry=1 to see if trial is retried.
-        assert RetryFailedTrialCallback.retried_trial_number(study.trials[1]) == (
+        assert RetryHeartbeatStaleTrialCallback.retried_trial_number(study.trials[1]) == (
             None if max_retry == 0 else 0
         )
         # Test inheritance of trial fields.
@@ -148,8 +183,8 @@ def test_retry_failed_trial_callback(storage_mode: str, max_retry: Optional[int]
 @pytest.mark.parametrize(
     "storage_mode,max_retry", itertools.product(STORAGE_MODES_HEARTBEAT, [None, 0, 1])
 )
-def test_retry_failed_trial_callback_intermediate(
-    storage_mode: str, max_retry: Optional[int]
+def test_retry_heartbeat_stale_trial_callback_intermediate(
+    storage_mode: str, max_retry: int | None
 ) -> None:
     heartbeat_interval = 1
     grace_period = 2
@@ -158,7 +193,7 @@ def test_retry_failed_trial_callback_intermediate(
         storage_mode,
         heartbeat_interval=heartbeat_interval,
         grace_period=grace_period,
-        failed_trial_callback=RetryFailedTrialCallback(
+        heartbeat_stale_trial_callback=RetryHeartbeatStaleTrialCallback(
             max_retry=max_retry, inherit_intermediate_values=True
         ),
     ) as storage:
@@ -183,7 +218,7 @@ def test_retry_failed_trial_callback_intermediate(
         # Test max_retry=None to see if trial is retried.
         # Test max_retry=0 to see if no trials are retried.
         # Test max_retry=1 to see if trial is retried.
-        assert RetryFailedTrialCallback.retried_trial_number(study.trials[1]) == (
+        assert RetryHeartbeatStaleTrialCallback.retried_trial_number(study.trials[1]) == (
             None if max_retry == 0 else 0
         )
         # Test inheritance of trial fields.
@@ -195,12 +230,12 @@ def test_retry_failed_trial_callback_intermediate(
 
 
 @pytest.mark.parametrize("grace_period", [None, 2])
-def test_fail_stale_trials(grace_period: Optional[int]) -> None:
+def test_fail_stale_trials(grace_period: int | None) -> None:
     storage_mode = "sqlite"
     heartbeat_interval = 1
     _grace_period = (heartbeat_interval * 2) if grace_period is None else grace_period
 
-    def failed_trial_callback(study: "optuna.Study", trial: FrozenTrial) -> None:
+    def heartbeat_stale_trial_callback(study: "optuna.Study", trial: FrozenTrial) -> None:
         assert study._storage.get_study_system_attrs(study._study_id)["test"] == "A"
         assert trial.system_attrs["test"] == "B"
 
@@ -218,7 +253,7 @@ def test_fail_stale_trials(grace_period: Optional[int]) -> None:
         assert isinstance(storage, RDBStorage)
         storage.heartbeat_interval = heartbeat_interval
         storage.grace_period = grace_period
-        storage.failed_trial_callback = failed_trial_callback
+        storage.heartbeat_stale_trial_callback = heartbeat_stale_trial_callback
         study = optuna.create_study(storage=storage)
         study._storage.set_study_system_attr(study._study_id, "test", "A")
 
@@ -301,7 +336,7 @@ def test_get_stale_trial_ids() -> None:
 
 
 @pytest.mark.parametrize("storage_mode", STORAGE_MODES_HEARTBEAT)
-def test_retry_failed_trial_callback_repetitive_failure(storage_mode: str) -> None:
+def test_retry_heartbeat_stale_trial_callback_repetitive_failure(storage_mode: str) -> None:
     heartbeat_interval = 1
     grace_period = 2
     max_retry = 3
@@ -311,7 +346,7 @@ def test_retry_failed_trial_callback_repetitive_failure(storage_mode: str) -> No
         storage_mode,
         heartbeat_interval=heartbeat_interval,
         grace_period=grace_period,
-        failed_trial_callback=RetryFailedTrialCallback(max_retry=max_retry),
+        heartbeat_stale_trial_callback=RetryHeartbeatStaleTrialCallback(max_retry=max_retry),
     ) as storage:
         assert is_heartbeat_enabled(storage)
         assert isinstance(storage, BaseHeartbeat)

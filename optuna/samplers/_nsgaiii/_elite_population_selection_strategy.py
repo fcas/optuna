@@ -1,22 +1,23 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable
-from collections.abc import Sequence
-import itertools
-import math
+from itertools import combinations_with_replacement
 from typing import TYPE_CHECKING
 
 import numpy as np
 
-from optuna.samplers._lazy_random_state import LazyRandomState
 from optuna.samplers.nsgaii._constraints_evaluation import _validate_constraints
 from optuna.samplers.nsgaii._elite_population_selection_strategy import _rank_population
-from optuna.trial import FrozenTrial
+from optuna.study._constrained_optimization import _is_constrained_optimization
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from collections.abc import Sequence
+
+    from optuna.samplers._lazy_random_state import LazyRandomState
     from optuna.study import Study
+    from optuna.trial import FrozenTrial
 
 
 # Define a coefficient for scaling intervals, used in _filter_inf() to replace +-inf.
@@ -54,9 +55,10 @@ class NSGAIIIElitePopulationSelectionStrategy:
         Returns:
             A list of trials that are selected as elite population.
         """
-        _validate_constraints(population, is_constrained=self._constraints_func is not None)
+        is_constrained = _is_constrained_optimization(population)
+        _validate_constraints(population, is_constrained=is_constrained)
         population_per_rank = _rank_population(
-            population, study.directions, is_constrained=self._constraints_func is not None
+            population, study.directions, is_constrained=is_constrained
         )
 
         elite_population: list[FrozenTrial] = []
@@ -102,58 +104,27 @@ class NSGAIIIElitePopulationSelectionStrategy:
         return elite_population
 
 
-# TODO(Shinichi) Replace with math.comb after support for python3.7 is deprecated.
-# This function calculates n multi-choose k, which is the total number of combinations with
-# repetition of size k from n items. This is equally re-written as math.comb(n+k-1, k)
-def _multi_choose(n: int, k: int) -> int:
-    return math.factorial(n + k - 1) // math.factorial(k) // math.factorial(n - 1)
-
-
 def _generate_default_reference_point(
     n_objectives: int, dividing_parameter: int = 3
 ) -> np.ndarray:
     """Generates default reference points which are `uniformly` spread on a hyperplane."""
-    reference_points = np.zeros(
-        (
-            _multi_choose(n_objectives, dividing_parameter),
-            n_objectives,
-        )
+    indices = np.array(
+        list(combinations_with_replacement(range(n_objectives), dividing_parameter))
     )
-    for i, comb in enumerate(
-        itertools.combinations_with_replacement(range(n_objectives), dividing_parameter)
-    ):
-        for j in comb:
-            reference_points[i, j] += 1.0
+    row_indices = np.repeat(np.arange(len(indices)), dividing_parameter)
+    col_indices = indices.flatten()
+    reference_points = np.zeros((len(indices), n_objectives), dtype=float)
+    np.add.at(reference_points, (row_indices, col_indices), 1.0)
     return reference_points
 
 
 def _filter_inf(population: list[FrozenTrial]) -> np.ndarray:
-    # Collect all objective values.
-    n_objectives = len(population[0].values)
-    objective_matrix = np.zeros((len(population), n_objectives))
-    for i, trial in enumerate(population):
-        objective_matrix[i] = np.array(trial.values, dtype=float)
-
-    mask_posinf = np.isposinf(objective_matrix)
-    mask_neginf = np.isneginf(objective_matrix)
-
-    # Replace +-inf with nan temporary to get max and min.
-    objective_matrix[mask_posinf + mask_neginf] = np.nan
-    nadir_point = np.nanmax(objective_matrix, axis=0)
-    ideal_point = np.nanmin(objective_matrix, axis=0)
-    interval = nadir_point - ideal_point
-
-    # TODO(Shinichi) reconsider alternative value for inf.
-    rows_posinf, cols_posinf = np.where(mask_posinf)
-    objective_matrix[rows_posinf, cols_posinf] = (
-        nadir_point[cols_posinf] + _COEF * interval[cols_posinf]
-    )
-    rows_neginf, cols_neginf = np.where(mask_neginf)
-    objective_matrix[rows_neginf, cols_neginf] = (
-        ideal_point[cols_neginf] - _COEF * interval[cols_neginf]
-    )
-
-    return objective_matrix
+    objective_matrix = np.asarray([t.values for t in population])
+    objective_matrix_with_nan = np.where(np.isfinite(objective_matrix), objective_matrix, np.nan)
+    max_objectives = np.nanmax(objective_matrix_with_nan, axis=0)
+    min_objectives = np.nanmin(objective_matrix_with_nan, axis=0)
+    margins = _COEF * (max_objectives - min_objectives)
+    return np.clip(objective_matrix, min_objectives - margins, max_objectives + margins)
 
 
 def _normalize_objective_values(objective_matrix: np.ndarray) -> np.ndarray:

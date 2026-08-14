@@ -1,8 +1,0 @@
-# Ignore everything
-**
-
-!pyproject.toml
-!README.md
-!optuna
-
-**/__pycache__

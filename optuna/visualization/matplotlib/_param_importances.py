@@ -1,17 +1,22 @@
 from __future__ import annotations
 
-from typing import Callable
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from optuna._experimental import experimental_func
-from optuna.importance._base import BaseImportanceEvaluator
 from optuna.logging import get_logger
-from optuna.study import Study
-from optuna.trial import FrozenTrial
 from optuna.visualization._param_importances import _get_importances_infos
 from optuna.visualization._param_importances import _ImportancesInfo
 from optuna.visualization.matplotlib._matplotlib_imports import _imports
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from optuna.importance._base import BaseImportanceEvaluator
+    from optuna.study import Study
+    from optuna.trial import FrozenTrial
 
 
 if _imports.is_successful():
@@ -35,32 +40,11 @@ def plot_param_importances(
     target: Callable[[FrozenTrial], float] | None = None,
     target_name: str = "Objective Value",
 ) -> "Axes":
-    """Plot hyperparameter importances with Matplotlib.
+    """Plot hyperparameter importances (:class:`~optuna.importance.PedAnovaImportanceEvaluator` by
+    default) with Matplotlib.
 
     .. seealso::
         Please refer to :func:`optuna.visualization.plot_param_importances` for an example.
-
-    Example:
-
-        The following code snippet shows how to plot hyperparameter importances.
-
-        .. plot::
-
-            import optuna
-
-
-            def objective(trial):
-                x = trial.suggest_int("x", 0, 2)
-                y = trial.suggest_float("y", -1.0, 1.0)
-                z = trial.suggest_float("z", 0.0, 1.5)
-                return x ** 2 + y ** 3 - z ** 4
-
-
-            sampler = optuna.samplers.RandomSampler(seed=10)
-            study = optuna.create_study(sampler=sampler)
-            study.optimize(objective, n_trials=100)
-
-            optuna.visualization.matplotlib.plot_param_importances(study)
 
     Args:
         study:
@@ -68,23 +52,32 @@ def plot_param_importances(
         evaluator:
             An importance evaluator object that specifies which algorithm to base the importance
             assessment on.
-            Defaults to
-            :class:`~optuna.importance.FanovaImportanceEvaluator`.
+            Defaults to :class:`~optuna.importance.PedAnovaImportanceEvaluator`.
+            For details on this evaluator, please refer to the following papers:
+
+            - `PED-ANOVA: Efficiently Quantifying Hyperparameter Importance in Arbitrary Subspaces
+              <https://arxiv.org/abs/2304.10255>`__ (IJCAI 2023)
+            - `Conditional PED-ANOVA: Hyperparameter Importance in Hierarchical & Dynamic Search
+              Spaces <https://arxiv.org/abs/2601.20800>`__ (KDD 2026)
+
+            When using this evaluator in your project, please consider citing both papers.
+
         params:
             A list of names of parameters to assess.
-            If :obj:`None`, all parameters that are present in all of the completed trials are
-            assessed.
+            If :obj:`None`, :class:`~optuna.importance.PedAnovaImportanceEvaluator` assesses all
+            parameters that appear in completed trials, including conditional parameters, while
+            other evaluators assess parameters present in all completed trials.
+            If specified, only the specified parameters are assessed.
+            When using :class:`~optuna.importance.PedAnovaImportanceEvaluator`, each specified
+            parameter must appear in at least one completed trial.
+            When using other evaluators, at least one completed trial must contain all specified
+            parameters.
         target:
-            A function to specify the value to display. If it is :obj:`None` and ``study`` is being
-            used for single-objective optimization, the objective values are plotted.
-            For multi-objective optimization, all objectives will be plotted if ``target``
-            is :obj:`None`.
-
-            .. note::
-                This argument can be used to specify which objective to plot if ``study`` is being
-                used for multi-objective optimization. For example, to get only the hyperparameter
-                importance of the first objective, use ``target=lambda t: t.values[0]`` for the
-                target parameter.
+            A function that returns the value used to evaluate and display importances.
+            If :obj:`None`, objective values are used for single-objective optimization.
+            For multi-objective optimization, all objectives will be plotted if ``target`` is
+            :obj:`None`. Specify ``target``, for example ``target=lambda t: t.values[0]``, to
+            plot importances for a specific objective.
         target_name:
             Target's name to display on the axis label. Names set via
             :meth:`~optuna.study.Study.set_metric_names` will be used if ``target`` is :obj:`None`,
@@ -135,6 +128,8 @@ def _get_importances_plot(infos: tuple[_ImportancesInfo, ...]) -> "Axes":
 
 
 def _set_bar_labels(info: _ImportancesInfo, fig: "Figure", ax: "Axes", offset: float) -> None:
+    # Figure canvas does not necessarily have a get_renderer.
+    assert hasattr(fig.canvas, "get_renderer")
     renderer = fig.canvas.get_renderer()
     for idx, (val, label) in enumerate(zip(info.importance_values, info.importance_labels)):
         text = ax.text(val, idx + offset, label, va="center")

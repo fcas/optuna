@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any
+from typing import TYPE_CHECKING
 
-import optuna
-from optuna.distributions import BaseDistribution
-from optuna.samplers._base import _CONSTRAINTS_KEY
+from optuna.study._constrained_optimization import _CONSTRAINTS_KEY
 from optuna.trial import FrozenTrial
 from optuna.trial import TrialState
+
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from optuna.distributions import BaseDistribution
 
 
 def _create_frozen_trial(
@@ -17,7 +21,7 @@ def _create_frozen_trial(
     params: dict[str, Any] | None = None,
     param_distributions: dict[str, BaseDistribution] | None = None,
     state: TrialState = TrialState.COMPLETE,
-) -> optuna.trial.FrozenTrial:
+) -> FrozenTrial:
     return FrozenTrial(
         number=number,
         value=1.0 if values is None else None,

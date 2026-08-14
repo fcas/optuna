@@ -8,7 +8,6 @@ from logging import FATAL
 from logging import INFO
 from logging import WARN
 from logging import WARNING
-import os
 import sys
 import threading
 
@@ -36,23 +35,10 @@ def create_default_formatter() -> logging.Formatter:
     """
     header = "[%(levelname)1.1s %(asctime)s]"
     message = "%(message)s"
-    if _color_supported():
-        return colorlog.ColoredFormatter(
-            f"%(log_color)s{header}%(reset)s {message}",
-        )
-    return logging.Formatter(f"{header} {message}")
-
-
-def _color_supported() -> bool:
-    """Detection of color support."""
-    # NO_COLOR environment variable:
-    if os.environ.get("NO_COLOR", None):
-        return False
-
-    if not hasattr(sys.stderr, "isatty") or not sys.stderr.isatty():
-        return False
-    else:
-        return True
+    return colorlog.TTYColoredFormatter(
+        f"%(log_color)s{header}%(reset)s {message}",
+        stream=sys.stderr,
+    )
 
 
 def _get_library_name() -> str:
@@ -294,7 +280,7 @@ def disable_propagation() -> None:
             logger.info("Logs from first optimize call")  # The logs are saved in the logs file.
             study.optimize(objective, n_trials=10)
 
-            optuna.logging.disable_propagation()  # Stop propogating logs to the root logger.
+            optuna.logging.disable_propagation()  # Stop propagating logs to the root logger.
 
             logger.info("Logs from second optimize call")
             # The new logs for second optimize call are not saved.

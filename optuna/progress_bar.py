@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 from typing import TYPE_CHECKING
-import warnings
 
 from tqdm.auto import tqdm
 
 from optuna import logging as optuna_logging
+from optuna._warnings import optuna_warn
 
 
 if TYPE_CHECKING:
@@ -48,7 +48,7 @@ class _ProgressBar:
         timeout: float | None = None,
     ) -> None:
         if is_valid and n_trials is None and timeout is None:
-            warnings.warn("Progress bar won't be displayed because n_trials and timeout are None.")
+            optuna_warn("Progress bar won't be displayed because n_trials and timeout are None.")
 
         self._is_valid = is_valid and (n_trials or timeout) is not None
         self._n_trials = n_trials
@@ -100,7 +100,7 @@ class _ProgressBar:
                 self._progress_bar.update(1)
                 if self._timeout is not None:
                     self._progress_bar.set_postfix_str(
-                        "{:.02f}/{} seconds".format(elapsed_seconds, self._timeout)
+                        f"{elapsed_seconds:.02f}/{self._timeout} seconds"
                     )
 
             elif self._timeout is not None:

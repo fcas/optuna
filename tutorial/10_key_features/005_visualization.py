@@ -6,13 +6,28 @@ Quick Visualization for Hyperparameter Optimization Analysis
 
 Optuna provides various visualization features in :mod:`optuna.visualization` to analyze optimization results visually.
 
+Note that this tutorial requires `Plotly <https://plotly.com/python>`__ to be installed:
+
+.. code-block:: console
+
+      $ pip install plotly
+
+      # Required if you are running this tutorial in Jupyter Notebook.
+      $ pip install nbformat
+
+If you prefer to use `Matplotlib <https://matplotlib.org/>`__ instead of Plotly, please run the following command:
+
+.. code-block:: console
+
+    $ pip install matplotlib
+
 This tutorial walks you through this module by visualizing the optimization results of PyTorch model for FashionMNIST dataset.
 
 For visualizing multi-objective optimization (i.e., the usage of :func:`optuna.visualization.plot_pareto_front`),
 please refer to the tutorial of :ref:`multi_objective`.
 
 .. note::
-   By using `Optuna Dashboard <https://github.com/optuna/optuna-dashboard>`_, you can also check the optimization history,
+   By using `Optuna Dashboard <https://github.com/optuna/optuna-dashboard>`__, you can also check the optimization history,
    hyperparameter importances, hyperparameter relationships, etc. in graphs and tables.
    Please make your study persistent using :ref:`RDB backend <rdb>` and execute following commands to run Optuna Dashboard.
 
@@ -21,7 +36,7 @@ please refer to the tutorial of :ref:`multi_objective`.
       $ pip install optuna-dashboard
       $ optuna-dashboard sqlite:///example-study.db
 
-   Please check out `the GitHub repository <https://github.com/optuna/optuna-dashboard>`_ for more details.
+   Please check out `the GitHub repository <https://github.com/optuna/optuna-dashboard>`__ for more details.
 
    .. list-table::
       :header-rows: 1
@@ -70,7 +85,7 @@ def define_model(trial):
 
     in_features = 28 * 28
     for i in range(n_layers):
-        out_features = trial.suggest_int("n_units_l{}".format(i), 64, 512)
+        out_features = trial.suggest_int(f"n_units_l{i}", 64, 512)
         layers.append(nn.Linear(in_features, out_features))
         layers.append(nn.ReLU())
 

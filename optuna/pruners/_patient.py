@@ -1,16 +1,30 @@
-from typing import Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-import optuna
 from optuna._experimental import experimental_class
 from optuna.pruners import BasePruner
 from optuna.study._study_direction import StudyDirection
 
 
+if TYPE_CHECKING:
+    import optuna
+
+
 @experimental_class("2.8.0")
 class PatientPruner(BasePruner):
     """Pruner which wraps another pruner with tolerance.
+
+    This pruner monitors intermediate values in a trial and prunes the trial if the improvement in
+    the intermediate values after a patience period is less than a threshold.
+
+    The pruner handles NaN values in the following manner:
+        1. If all intermediate values before or during the patient period are NaN, the trial will
+        not be pruned
+        2. During the pruning calculations, NaN values are ignored. Only valid numeric values are
+        considered.
 
     Example:
 
@@ -66,7 +80,7 @@ class PatientPruner(BasePruner):
     """
 
     def __init__(
-        self, wrapped_pruner: Optional[BasePruner], patience: int, min_delta: float = 0.0
+        self, wrapped_pruner: BasePruner | None, patience: int, min_delta: float = 0.0
     ) -> None:
         if patience < 0:
             raise ValueError(f"patience cannot be negative but got {patience}.")
@@ -78,7 +92,7 @@ class PatientPruner(BasePruner):
         self._patience = patience
         self._min_delta = min_delta
 
-    def prune(self, study: "optuna.study.Study", trial: "optuna.trial.FrozenTrial") -> bool:
+    def prune(self, study: optuna.study.Study, trial: optuna.trial.FrozenTrial) -> bool:
         step = trial.last_step
         if step is None:
             return False

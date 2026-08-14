@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import threading
 from typing import Any
-from typing import Callable
+from typing import TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class _TestableThread(threading.Thread):

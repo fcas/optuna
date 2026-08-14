@@ -1,15 +1,20 @@
 from __future__ import annotations
 
-from collections.abc import KeysView
 import functools
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-import optuna
 from optuna.pruners import BasePruner
 from optuna.study._study_direction import StudyDirection
 from optuna.trial._state import TrialState
+
+
+if TYPE_CHECKING:
+    from collections.abc import KeysView
+
+    import optuna
 
 
 def _get_best_intermediate_result_over_steps(
@@ -120,8 +125,9 @@ class PercentilePruner(BasePruner):
         n_startup_trials:
             Pruning is disabled until the given number of trials finish in the same study.
         n_warmup_steps:
-            Pruning is disabled until the trial exceeds the given number of step. Note that
-            this feature assumes that ``step`` starts at zero.
+            Pruning is disabled while the current step is less than ``n_warmup_steps``; the
+            earliest a trial can be pruned is at ``step == n_warmup_steps``. This feature
+            assumes that ``step`` is a non-negative integer.
         interval_steps:
             Interval in number of steps between the pruning checks, offset by the warmup steps.
             If no value has been reported at the time of a pruning check, that particular check
@@ -144,23 +150,23 @@ class PercentilePruner(BasePruner):
     ) -> None:
         if not 0.0 <= percentile <= 100:
             raise ValueError(
-                "Percentile must be between 0 and 100 inclusive but got {}.".format(percentile)
+                f"Percentile must be between 0 and 100 inclusive, but got {percentile=}."
             )
         if n_startup_trials < 0:
             raise ValueError(
-                "Number of startup trials cannot be negative but got {}.".format(n_startup_trials)
+                f"Number of startup trials cannot be negative, but got {n_startup_trials=}."
             )
         if n_warmup_steps < 0:
             raise ValueError(
-                "Number of warmup steps cannot be negative but got {}.".format(n_warmup_steps)
+                f"Number of warmup steps cannot be negative, but got {n_warmup_steps=}."
             )
         if interval_steps < 1:
             raise ValueError(
-                "Pruning interval steps must be at least 1 but got {}.".format(interval_steps)
+                f"Pruning interval steps must be at least 1, but got {interval_steps=}."
             )
         if n_min_trials < 1:
             raise ValueError(
-                "Number of trials for pruning must be at least 1 but got {}.".format(n_min_trials)
+                f"Number of trials for pruning must be at least 1, but got {n_min_trials=}."
             )
 
         self._percentile = percentile

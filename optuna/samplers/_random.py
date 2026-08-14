@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-from typing import Any
-from typing import Dict
-from typing import Optional
 from typing import TYPE_CHECKING
 
-from optuna import distributions
 from optuna._transform import _SearchSpaceTransform
-from optuna.distributions import BaseDistribution
 from optuna.samplers import BaseSampler
 from optuna.samplers._lazy_random_state import LazyRandomState
-from optuna.trial import FrozenTrial
 
 
 if TYPE_CHECKING:
+    from typing import Any
+
+    from optuna import distributions
+    from optuna.distributions import BaseDistribution
     from optuna.study import Study
+    from optuna.trial import FrozenTrial
 
 
 class RandomSampler(BaseSampler):
@@ -43,7 +42,7 @@ class RandomSampler(BaseSampler):
         seed: Seed for random number generator.
     """
 
-    def __init__(self, seed: Optional[int] = None) -> None:
+    def __init__(self, seed: int | None = None) -> None:
         self._rng = LazyRandomState(seed)
 
     def reseed_rng(self) -> None:
@@ -51,12 +50,12 @@ class RandomSampler(BaseSampler):
 
     def infer_relative_search_space(
         self, study: Study, trial: FrozenTrial
-    ) -> Dict[str, BaseDistribution]:
+    ) -> dict[str, BaseDistribution]:
         return {}
 
     def sample_relative(
-        self, study: Study, trial: FrozenTrial, search_space: Dict[str, BaseDistribution]
-    ) -> Dict[str, Any]:
+        self, study: Study, trial: FrozenTrial, search_space: dict[str, BaseDistribution]
+    ) -> dict[str, Any]:
         return {}
 
     def sample_independent(

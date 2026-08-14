@@ -1,18 +1,24 @@
 from __future__ import annotations
 
-from typing import Callable
-from typing import Sequence
+from typing import TYPE_CHECKING
 
 from optuna._experimental import experimental_func
-from optuna.study import Study
-from optuna.trial import FrozenTrial
 from optuna.visualization._pareto_front import _get_pareto_front_info
 from optuna.visualization._pareto_front import _ParetoFrontInfo
 from optuna.visualization.matplotlib._matplotlib_imports import _imports
 
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from collections.abc import Sequence
+
+    from optuna.study import Study
+    from optuna.trial import FrozenTrial
+
+
 if _imports.is_successful():
     from optuna.visualization.matplotlib._matplotlib_imports import Axes
+    from optuna.visualization.matplotlib._matplotlib_imports import Axes3D
     from optuna.visualization.matplotlib._matplotlib_imports import plt
 
 
@@ -22,7 +28,6 @@ def plot_pareto_front(
     *,
     target_names: list[str] | None = None,
     include_dominated_trials: bool = True,
-    axis_order: list[int] | None = None,
     constraints_func: Callable[[FrozenTrial], Sequence[float]] | None = None,
     targets: Callable[[FrozenTrial], Sequence[float]] | None = None,
 ) -> "Axes":
@@ -30,29 +35,6 @@ def plot_pareto_front(
 
     .. seealso::
         Please refer to :func:`optuna.visualization.plot_pareto_front` for an example.
-
-    Example:
-
-        The following code snippet shows how to plot the Pareto front of a study.
-
-        .. plot::
-
-            import optuna
-
-
-            def objective(trial):
-                x = trial.suggest_float("x", 0, 5)
-                y = trial.suggest_float("y", 0, 3)
-
-                v0 = 4 * x ** 2 + 4 * y ** 2
-                v1 = (x - 5) ** 2 + (y - 5) ** 2
-                return v0, v1
-
-
-            study = optuna.create_study(directions=["minimize", "minimize"])
-            study.optimize(objective, n_trials=50)
-
-            optuna.visualization.matplotlib.plot_pareto_front(study)
 
     Args:
         study:
@@ -65,14 +47,6 @@ def plot_pareto_front(
             ``target_name`` must be specified.
         include_dominated_trials:
             A flag to include all dominated trial's objective values.
-        axis_order:
-            A list of indices indicating the axis order. If :obj:`None` is specified,
-            default order is used. ``axis_order`` and ``targets`` cannot be used at the same time.
-
-            .. warning::
-                Deprecated in v3.0.0. This feature will be removed in the future. The removal of
-                this feature is currently scheduled for v5.0.0, but this schedule is subject to
-                change. See https://github.com/optuna/optuna/releases/tag/v3.0.0.
         constraints_func:
             An optional function that computes the objective constraints. It must take a
             :class:`~optuna.trial.FrozenTrial` and return the constraints. The return value must
@@ -84,11 +58,15 @@ def plot_pareto_front(
             If given, trials are classified into three categories: feasible and best, feasible but
             non-best, and infeasible. Categories are shown in different colors. Here, whether a
             trial is best (on Pareto front) or not is determined ignoring all infeasible trials.
+
+            .. warning::
+                Deprecated in v4.0.0. This feature will be removed in the future. The removal of
+                this feature is currently scheduled for v6.0.0, but this schedule is subject to
+                change. See https://github.com/optuna/optuna/releases/tag/v4.0.0.
         targets:
             A function that returns a tuple of target values to display.
             The argument to this function is :class:`~optuna.trial.FrozenTrial`.
             ``targets`` must be :obj:`None` or return 2 or 3 values.
-            ``axis_order`` and ``targets`` cannot be used at the same time.
             If the number of objectives is neither 2 nor 3, ``targets`` must be specified.
 
             .. note::
@@ -103,7 +81,7 @@ def plot_pareto_front(
     _imports.check()
 
     info = _get_pareto_front_info(
-        study, target_names, include_dominated_trials, axis_order, constraints_func, targets
+        study, target_names, include_dominated_trials, constraints_func, targets
     )
     return _get_pareto_front_plot(info)
 
@@ -161,7 +139,7 @@ def _get_pareto_front_3d(info: _ParetoFrontInfo) -> "Axes":
     # Set up the graph style.
     plt.style.use("ggplot")  # Use ggplot style sheet for similar outputs to plotly.
     fig = plt.figure()
-    ax = fig.add_subplot(projection="3d")
+    ax: Axes3D = fig.add_subplot(projection="3d")
     ax.set_title("Pareto-front Plot")
     cmap = plt.get_cmap("tab10")  # Use tab10 colormap for similar outputs to plotly.
 

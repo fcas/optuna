@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import copy
+from collections.abc import Sequence
 import math
-from typing import Optional
-from typing import Sequence
 from typing import TYPE_CHECKING
-from typing import Union
-import warnings
 
 import optuna
 from optuna import logging
 from optuna import pruners
+from optuna._warnings import optuna_warn
 from optuna.trial import FrozenTrial
 from optuna.trial import TrialState
 
@@ -20,14 +17,10 @@ if TYPE_CHECKING:
     from optuna import Trial
 
 
-# This is used for propagating warning message to Study.optimize.
-STUDY_TELL_WARNING_KEY = "STUDY_TELL_WARNING"
-
-
 _logger = logging.get_logger(__name__)
 
 
-def _get_frozen_trial(study: Study, trial: Union[Trial, int]) -> FrozenTrial:
+def _get_frozen_trial(study: Study, trial: Trial | int) -> FrozenTrial:
     if isinstance(trial, optuna.Trial):
         trial_id = trial._trial_id
     elif isinstance(trial, int):
@@ -38,8 +31,7 @@ def _get_frozen_trial(study: Study, trial: Union[Trial, int]) -> FrozenTrial:
             )
         except KeyError as e:
             raise ValueError(
-                f"Cannot tell for trial with number {trial_number} since it has not been "
-                "created."
+                f"Cannot tell for trial with number {trial_number} since it has not been created."
             ) from e
     else:
         raise TypeError("Trial must be a trial object or trial number.")
@@ -48,7 +40,7 @@ def _get_frozen_trial(study: Study, trial: Union[Trial, int]) -> FrozenTrial:
 
 
 def _check_state_and_values(
-    state: Optional[TrialState], values: Optional[Union[float, Sequence[float]]]
+    state: TrialState | None, values: float | Sequence[float] | None
 ) -> None:
     if state == TrialState.COMPLETE:
         if values is None:
@@ -65,35 +57,34 @@ def _check_state_and_values(
         raise ValueError(f"Cannot tell with state {state}.")
 
 
-def _check_values_are_feasible(study: Study, values: Sequence[float]) -> Optional[str]:
+def _check_values_are_feasible(study: Study, values: Sequence[float]) -> str | None:
+    errors = []
     for v in values:
-        # TODO(Imamura): Construct error message taking into account all values and do not early
-        # return `value` is assumed to be ignored on failure so we can set it to any value.
         try:
             float(v)
         except (ValueError, TypeError):
-            return f"The value {repr(v)} could not be cast to float"
-
+            errors.append(f"The value {repr(v)} could not be cast to float")
+            continue
         if math.isnan(v):
-            return f"The value {v} is not acceptable"
-
+            errors.append(f"The value {v} is not acceptable")
+    if errors:
+        return "; ".join(errors)
     if len(study.directions) != len(values):
         return (
             f"The number of the values {len(values)} did not match the number of the objectives "
             f"{len(study.directions)}"
         )
-
     return None
 
 
 def _tell_with_warning(
     study: Study,
-    trial: Union[Trial, int],
-    value_or_values: Optional[Union[float, Sequence[float]]] = None,
-    state: Optional[TrialState] = None,
+    trial: Trial | int,
+    value_or_values: float | Sequence[float] | None = None,
+    state: TrialState | None = None,
     skip_if_finished: bool = False,
     suppress_warning: bool = False,
-) -> FrozenTrial:
+) -> tuple[TrialState, list[float] | None, str | None]:
     """Internal method of :func:`~optuna.study.Study.tell`.
 
     Refer to the document for :func:`~optuna.study.Study.tell` for the reference.
@@ -117,12 +108,12 @@ def _tell_with_warning(
             f"{value_or_values} and state {state} since trial was already finished. "
             f"Finished trial has values {frozen_trial.values} and state {frozen_trial.state}."
         )
-        return copy.deepcopy(frozen_trial)
+        return frozen_trial.state, frozen_trial.values, None
     elif frozen_trial.state != TrialState.RUNNING:
         raise ValueError(f"Cannot tell a {frozen_trial.state.name} trial.")
 
     # Validate the state and values arguments.
-    values: Optional[Sequence[float]]
+    values: Sequence[float] | None
     if value_or_values is None:
         values = None
     elif isinstance(value_or_values, Sequence):
@@ -132,7 +123,7 @@ def _tell_with_warning(
 
     _check_state_and_values(state, values)
 
-    warning_message = None
+    values_conversion_failure_message = None
 
     if state == TrialState.COMPLETE:
         assert values is not None
@@ -163,9 +154,8 @@ def _tell_with_warning(
             state = TrialState.FAIL
             values = None
             if not suppress_warning:
-                warnings.warn(values_conversion_failure_message)
-            else:
-                warning_message = values_conversion_failure_message
+                optuna_warn(values_conversion_failure_message)
+                values_conversion_failure_message = None
 
     assert state is not None
 
@@ -182,8 +172,4 @@ def _tell_with_warning(
     finally:
         study._storage.set_trial_state_values(frozen_trial._trial_id, state, values)
 
-    frozen_trial = copy.deepcopy(study._storage.get_trial(frozen_trial._trial_id))
-
-    if warning_message is not None:
-        frozen_trial._system_attrs[STUDY_TELL_WARNING_KEY] = warning_message
-    return frozen_trial
+    return state, values, values_conversion_failure_message

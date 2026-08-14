@@ -1,21 +1,25 @@
 from __future__ import annotations
 
-from typing import Callable
-from typing import Sequence
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from optuna._experimental import experimental_func
 from optuna._imports import try_import
-from optuna.logging import get_logger
-from optuna.study import Study
-from optuna.trial import FrozenTrial
 from optuna.visualization._contour import _AxisInfo
 from optuna.visualization._contour import _ContourInfo
 from optuna.visualization._contour import _get_contour_info
 from optuna.visualization._contour import _PlotValues
 from optuna.visualization._contour import _SubContourInfo
 from optuna.visualization.matplotlib._matplotlib_imports import _imports
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from collections.abc import Sequence
+
+    from optuna.study import Study
+    from optuna.trial import FrozenTrial
 
 
 with try_import() as _optuna_imports:
@@ -26,8 +30,6 @@ if _imports.is_successful():
     from optuna.visualization.matplotlib._matplotlib_imports import Colormap
     from optuna.visualization.matplotlib._matplotlib_imports import ContourSet
     from optuna.visualization.matplotlib._matplotlib_imports import plt
-
-_logger = get_logger(__name__)
 
 
 CONTOUR_POINT_NUM = 100
@@ -40,39 +42,13 @@ def plot_contour(
     *,
     target: Callable[[FrozenTrial], float] | None = None,
     target_name: str = "Objective Value",
-) -> "Axes":
+) -> "Axes | np.ndarray":
     """Plot the parameter relationship as contour plot in a study with Matplotlib.
 
     Note that, if a parameter contains missing values, a trial with missing values is not plotted.
 
     .. seealso::
         Please refer to :func:`optuna.visualization.plot_contour` for an example.
-
-    Warnings:
-        Output figures of this Matplotlib-based
-        :func:`~optuna.visualization.matplotlib.plot_contour` function would be different from
-        those of the Plotly-based :func:`~optuna.visualization.plot_contour`.
-
-    Example:
-
-        The following code snippet shows how to plot the parameter relationship as contour plot.
-
-        .. plot::
-
-            import optuna
-
-
-            def objective(trial):
-                x = trial.suggest_float("x", -100, 100)
-                y = trial.suggest_categorical("y", [-1, 0, 1])
-                return x ** 2 + y
-
-
-            sampler = optuna.samplers.TPESampler(seed=10)
-            study = optuna.create_study(sampler=sampler)
-            study.optimize(objective, n_trials=30)
-
-            optuna.visualization.matplotlib.plot_contour(study, params=["x", "y"])
 
     Args:
         study:
@@ -89,7 +65,8 @@ def plot_contour(
             Target's name to display on the color bar.
 
     Returns:
-        A :class:`matplotlib.axes.Axes` object.
+        A :class:`matplotlib.axes.Axes` object or a :class:`numpy.ndarray` of
+        :class:`matplotlib.axes.Axes` objects.
 
     .. note::
         The colormap is reversed when the ``target`` argument isn't :obj:`None` or ``direction``
@@ -97,15 +74,11 @@ def plot_contour(
     """
 
     _imports.check()
-    _logger.warning(
-        "Output figures of this Matplotlib-based `plot_contour` function would be different from "
-        "those of the Plotly-based `plot_contour`."
-    )
     info = _get_contour_info(study, params, target, target_name)
     return _get_contour_plot(info)
 
 
-def _get_contour_plot(info: _ContourInfo) -> "Axes":
+def _get_contour_plot(info: _ContourInfo) -> "Axes | np.ndarray":
     sorted_params = info.sorted_params
     sub_plot_infos = info.sub_plot_infos
     reverse_scale = info.reverse_scale
@@ -130,6 +103,7 @@ def _get_contour_plot(info: _ContourInfo) -> "Axes":
     else:
         # Set up the graph style.
         fig, axs = plt.subplots(n_params, n_params)
+        assert isinstance(axs, np.ndarray)
         fig.suptitle("Contour Plot")
         cmap = _set_cmap(reverse_scale)
 
@@ -164,9 +138,6 @@ class _LabelEncoder:
     def transform(self, labels: list[str]) -> list[int]:
         return [self.labels.index(label) for label in labels]
 
-    def fit_transform(self, labels: list[str]) -> list[int]:
-        return self.fit(labels).transform(labels)
-
     def get_labels(self) -> list[str]:
         return self.labels
 
@@ -174,19 +145,49 @@ class _LabelEncoder:
         return list(range(len(self.labels)))
 
 
-def _calculate_griddata(
-    info: _SubContourInfo,
-) -> tuple[
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    list[int],
-    list[str],
-    list[int],
-    list[str],
-    _PlotValues,
-    _PlotValues,
-]:
+def _filter_missing_values(
+    xaxis: _AxisInfo, yaxis: _AxisInfo
+) -> tuple[list[str | float], list[str | float]]:
+    x_values = []
+    y_values = []
+    for x_value, y_value in zip(xaxis.values, yaxis.values):
+        if x_value is not None and y_value is not None:
+            x_values.append(x_value)
+            y_values.append(y_value)
+    return x_values, y_values
+
+
+def _calculate_axis_data(
+    axis: _AxisInfo,
+    values: Sequence[str | float],
+) -> tuple[np.ndarray, list[str], list[int], list[int | float]]:
+    # Convert categorical values to int.
+    cat_param_labels: list[str] = []
+    cat_param_pos: list[int] = []
+    returned_values: Sequence[int | float]
+    if axis.is_cat:
+        enc = _LabelEncoder()
+        # Fit LabelEncoder with all the categories in categorical distribution.
+        enc.fit(list(map(str, filter(lambda value: value is not None, axis.values))))
+        # Then transform the values using the fitted label encoder.
+        # Note that `values` may not include all the categories,
+        # so we use `axis.values` for fitting.
+        returned_values = enc.transform(list(map(str, values)))
+        cat_param_labels = enc.get_labels()
+        cat_param_pos = enc.get_indices()
+    else:
+        returned_values = list(map(lambda x: float(x), values))
+
+    # For x and y, create 1-D array of evenly spaced coordinates on linear or log scale.
+    if axis.is_log:
+        ci = np.logspace(np.log10(axis.range[0]), np.log10(axis.range[1]), CONTOUR_POINT_NUM)
+    else:
+        ci = np.linspace(axis.range[0], axis.range[1], CONTOUR_POINT_NUM)
+
+    return ci, cat_param_labels, cat_param_pos, list(returned_values)
+
+
+def _calculate_griddata(info: _SubContourInfo) -> tuple[np.ndarray, _PlotValues, _PlotValues]:
     xaxis = info.xaxis
     yaxis = info.yaxis
     z_values_dict = info.z_values
@@ -204,47 +205,13 @@ def _calculate_griddata(
 
     # Return empty values when x or y has no value.
     if len(x_values) == 0 or len(y_values) == 0:
-        return (
-            np.array([]),
-            np.array([]),
-            np.array([]),
-            [],
-            [],
-            [],
-            [],
-            _PlotValues([], []),
-            _PlotValues([], []),
-        )
+        return np.array([]), _PlotValues([], []), _PlotValues([], [])
 
-    def _calculate_axis_data(
-        axis: _AxisInfo,
-        values: Sequence[str | float],
-    ) -> tuple[np.ndarray, list[str], list[int], list[int | float]]:
-        # Convert categorical values to int.
-        cat_param_labels: list[str] = []
-        cat_param_pos: list[int] = []
-        returned_values: Sequence[int | float]
-        if axis.is_cat:
-            enc = _LabelEncoder()
-            returned_values = enc.fit_transform(list(map(str, values)))
-            cat_param_labels = enc.get_labels()
-            cat_param_pos = enc.get_indices()
-        else:
-            returned_values = list(map(lambda x: float(x), values))
-
-        # For x and y, create 1-D array of evenly spaced coordinates on linear or log scale.
-        if axis.is_log:
-            ci = np.logspace(np.log10(axis.range[0]), np.log10(axis.range[1]), CONTOUR_POINT_NUM)
-        else:
-            ci = np.linspace(axis.range[0], axis.range[1], CONTOUR_POINT_NUM)
-
-        return ci, cat_param_labels, cat_param_pos, list(returned_values)
-
-    xi, cat_param_labels_x, cat_param_pos_x, transformed_x_values = _calculate_axis_data(
+    xi, _, _, transformed_x_values = _calculate_axis_data(
         xaxis,
         x_values,
     )
-    yi, cat_param_labels_y, cat_param_pos_y, transformed_y_values = _calculate_axis_data(
+    yi, _, _, transformed_y_values = _calculate_axis_data(
         yaxis,
         y_values,
     )
@@ -269,87 +236,71 @@ def _calculate_griddata(
             infeasible.x.append(x_value)
             infeasible.y.append(y_value)
 
-    return (
-        xi,
-        yi,
-        zi,
-        cat_param_pos_x,
-        cat_param_labels_x,
-        cat_param_pos_y,
-        cat_param_labels_y,
-        feasible,
-        infeasible,
-    )
+    return zi, feasible, infeasible
 
 
-def _generate_contour_subplot(info: _SubContourInfo, ax: "Axes", cmap: "Colormap") -> "ContourSet":
+def _generate_contour_subplot(
+    info: _SubContourInfo, ax: "Axes", cmap: "Colormap"
+) -> "ContourSet" | None:
+    ax.label_outer()
+
     if len(info.xaxis.indices) < 2 or len(info.yaxis.indices) < 2:
-        ax.label_outer()
-        return ax
+        return None
 
     ax.set(xlabel=info.xaxis.name, ylabel=info.yaxis.name)
     ax.set_xlim(info.xaxis.range[0], info.xaxis.range[1])
     ax.set_ylim(info.yaxis.range[0], info.yaxis.range[1])
-
-    if info.xaxis.name == info.yaxis.name:
-        ax.label_outer()
-        return ax
-
-    (
-        xi,
-        yi,
-        zi,
-        x_cat_param_pos,
-        x_cat_param_label,
-        y_cat_param_pos,
-        y_cat_param_label,
-        feasible_plot_values,
-        infeasible_plot_values,
-    ) = _calculate_griddata(info)
-    cs = None
-    if len(zi) > 0:
-        if info.xaxis.is_log:
-            ax.set_xscale("log")
-        if info.yaxis.is_log:
-            ax.set_yscale("log")
-        if info.xaxis.name != info.yaxis.name:
-            # Contour the gridded data.
-            ax.contour(xi, yi, zi, 15, linewidths=0.5, colors="k")
-            cs = ax.contourf(xi, yi, zi, 15, cmap=cmap.reversed())
-            # Plot data points.
-            ax.scatter(
-                feasible_plot_values.x,
-                feasible_plot_values.y,
-                marker="o",
-                c="black",
-                s=20,
-                edgecolors="grey",
-                linewidth=2.0,
-            )
-            ax.scatter(
-                infeasible_plot_values.x,
-                infeasible_plot_values.y,
-                marker="o",
-                c="#cccccc",
-                s=20,
-                edgecolors="grey",
-                linewidth=2.0,
-            )
-
+    x_values, y_values = _filter_missing_values(info.xaxis, info.yaxis)
+    xi, x_cat_param_label, x_cat_param_pos, _ = _calculate_axis_data(info.xaxis, x_values)
+    yi, y_cat_param_label, y_cat_param_pos, _ = _calculate_axis_data(info.yaxis, y_values)
     if info.xaxis.is_cat:
         ax.set_xticks(x_cat_param_pos)
         ax.set_xticklabels(x_cat_param_label)
+    else:
+        ax.set_xscale("log" if info.xaxis.is_log else "linear")
     if info.yaxis.is_cat:
         ax.set_yticks(y_cat_param_pos)
         ax.set_yticklabels(y_cat_param_label)
-    ax.label_outer()
+    else:
+        ax.set_yscale("log" if info.yaxis.is_log else "linear")
+
+    if info.xaxis.name == info.yaxis.name:
+        return None
+
+    zi, feasible_plot_values, infeasible_plot_values = _calculate_griddata(info)
+    cs = None
+    if len(zi) > 0:
+        # Contour the gridded data.
+        ax.contour(xi, yi, zi, 15, linewidths=0.5, colors="k")
+        cs = ax.contourf(xi, yi, zi, 15, cmap=cmap.reversed())
+        assert isinstance(cs, ContourSet)
+        # Plot data points.
+        ax.scatter(
+            feasible_plot_values.x,
+            feasible_plot_values.y,
+            marker="o",
+            c="black",
+            s=20,
+            edgecolors="grey",
+            linewidth=2.0,
+        )
+        ax.scatter(
+            infeasible_plot_values.x,
+            infeasible_plot_values.y,
+            marker="o",
+            c="#cccccc",
+            s=20,
+            edgecolors="grey",
+            linewidth=2.0,
+        )
+
     return cs
 
 
 def _create_zmap(
-    x_values: list[int | float],
-    y_values: list[int | float],
-    z_values: list[float],
+    x_values: Sequence[int | float],
+    y_values: Sequence[int | float],
+    z_values: Sequence[float],
     xi: np.ndarray,
     yi: np.ndarray,
 ) -> dict[tuple[int, int], float]:

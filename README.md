@@ -2,23 +2,35 @@
 
 # Optuna: A hyperparameter optimization framework
 
-[![Python](https://img.shields.io/badge/python-3.7%20%7C%203.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue)](https://www.python.org)
+[![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](https://www.python.org)
 [![pypi](https://img.shields.io/pypi/v/optuna.svg)](https://pypi.python.org/pypi/optuna)
 [![conda](https://img.shields.io/conda/vn/conda-forge/optuna.svg)](https://anaconda.org/conda-forge/optuna)
 [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/optuna/optuna)
 [![Read the Docs](https://readthedocs.org/projects/optuna/badge/?version=stable)](https://optuna.readthedocs.io/en/stable/)
-[![Codecov](https://codecov.io/gh/optuna/optuna/branch/master/graph/badge.svg)](https://codecov.io/gh/optuna/optuna)
 
 :link: [**Website**](https://optuna.org/)
 | :page_with_curl: [**Docs**](https://optuna.readthedocs.io/en/stable/)
 | :gear: [**Install Guide**](https://optuna.readthedocs.io/en/stable/installation.html)
 | :pencil: [**Tutorial**](https://optuna.readthedocs.io/en/stable/tutorial/index.html)
 | :bulb: [**Examples**](https://github.com/optuna/optuna-examples)
+| [**Twitter**](https://twitter.com/OptunaAutoML)
+| [**LinkedIn**](https://www.linkedin.com/showcase/optuna/)
+| [**Medium**](https://medium.com/optuna)
 
 *Optuna* is an automatic hyperparameter optimization software framework, particularly designed
 for machine learning. It features an imperative, *define-by-run* style user API. Thanks to our
 *define-by-run* API, the code written with Optuna enjoys high modularity, and the user of
 Optuna can dynamically construct the search spaces for the hyperparameters.
+
+## :loudspeaker: News
+
+<!-- TODO: when you add a new line, please delete the oldest line -->
+* **Aug 3, 2026**: Release candidate of Optuna v5 is available! Check out [the release note](https://github.com/optuna/optuna/releases/tag/v5.0.0-rc1) for details.
+* **Jun 1, 2026**: Optuna 4.9.0 is out! Check out [the release note](https://github.com/optuna/optuna/releases/tag/v4.9.0) for details.
+* **Mar 16, 2026**: Optuna 4.8.0 is out! Check out [the release note](https://github.com/optuna/optuna/releases/tag/v4.8.0) for details.
+* **Jan 19, 2026**: Optuna 4.7.0 is out! Check out [the release note](https://github.com/optuna/optuna/releases/tag/v4.7.0) for details.
+* **Nov 10, 2025**: A new article [Announcing Optuna 4.6](https://medium.com/optuna/announcing-optuna-4-6-a9e82183ab07) has been published.
+* **Oct 28, 2025**: A new article [AutoSampler: Full Support for Multi-Objective & Constrained Optimization](https://medium.com/optuna/autosampler-full-support-for-multi-objective-constrained-optimization-c1c4fc957ba2) has been published.
 
 ## :fire: Key Features
 
@@ -54,18 +66,20 @@ optimization *studies*.
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](http://colab.research.google.com/github/optuna/optuna-examples/blob/main/quickstart.ipynb)
 
 ```python
-import ...
+import optuna
+import sklearn
+
 
 # Define an objective function to be minimized.
 def objective(trial):
 
     # Invoke suggest methods of a Trial object to generate hyperparameters.
-    regressor_name = trial.suggest_categorical('regressor', ['SVR', 'RandomForest'])
-    if regressor_name == 'SVR':
-        svr_c = trial.suggest_float('svr_c', 1e-10, 1e10, log=True)
+    regressor_name = trial.suggest_categorical("regressor", ["SVR", "RandomForest"])
+    if regressor_name == "SVR":
+        svr_c = trial.suggest_float("svr_c", 1e-10, 1e10, log=True)
         regressor_obj = sklearn.svm.SVR(C=svr_c)
     else:
-        rf_max_depth = trial.suggest_int('rf_max_depth', 2, 32)
+        rf_max_depth = trial.suggest_int("rf_max_depth", 2, 32)
         regressor_obj = sklearn.ensemble.RandomForestRegressor(max_depth=rf_max_depth)
 
     X, y = sklearn.datasets.fetch_california_housing(return_X_y=True)
@@ -78,6 +92,7 @@ def objective(trial):
 
     return error  # An objective value linked with the Trial object.
 
+
 study = optuna.create_study()  # Create a new study.
 study.optimize(objective, n_trials=100)  # Invoke optimization of the objective function.
 ```
@@ -86,7 +101,7 @@ study.optimize(objective, n_trials=100)  # Invoke optimization of the objective 
 > [!NOTE]
 > More examples can be found in [optuna/optuna-examples](https://github.com/optuna/optuna-examples).
 >
-> The examples cover diverse problem setups such as multi-objective optimization, constrained optimization, pruning, and distributed optimization. 
+> The examples cover diverse problem setups such as multi-objective optimization, constrained optimization, pruning, and distributed optimization.
 
 ## Installation
 
@@ -103,9 +118,7 @@ $ conda install -c conda-forge optuna
 ```
 
 > [!IMPORTANT]
-> Optuna supports Python 3.7 or newer.
->
-> Also, we provide Optuna docker images on [DockerHub](https://hub.docker.com/r/optuna/optuna).
+> Optuna supports Python 3.9 or newer.
 
 ## Integrations
 
@@ -119,15 +132,11 @@ Optuna has integration features with various third-party libraries. Integrations
 * [fastai](https://github.com/optuna/optuna-examples/tree/main/fastai/fastai_simple.py)
 * [Keras](https://github.com/optuna/optuna-examples/tree/main/keras/keras_integration.py)
 * [LightGBM](https://github.com/optuna/optuna-examples/tree/main/lightgbm/lightgbm_integration.py)
-* [MLflow](https://github.com/optuna/optuna-examples/tree/main/mlflow/keras_mlflow.py)
-* [MXNet](https://github.com/optuna/optuna-examples/tree/main/mxnet/mxnet_integration.py)
 * [PyTorch](https://github.com/optuna/optuna-examples/tree/main/pytorch/pytorch_simple.py)
 * [PyTorch Ignite](https://github.com/optuna/optuna-examples/tree/main/pytorch/pytorch_ignite_simple.py)
 * [PyTorch Lightning](https://github.com/optuna/optuna-examples/tree/main/pytorch/pytorch_lightning_simple.py)
-* [TensorBoard](https://github.com/optuna/optuna-examples/tree/main/tensorboard/tensorboard_simple.py)
 * [TensorFlow](https://github.com/optuna/optuna-examples/tree/main/tensorflow/tensorflow_estimator_integration.py)
 * [tf.keras](https://github.com/optuna/optuna-examples/tree/main/tfkeras/tfkeras_integration.py)
-* [Weights & Biases](https://github.com/optuna/optuna-examples/tree/main/wandb/wandb_integration.py)
 * [XGBoost](https://github.com/optuna/optuna-examples/tree/main/xgboost/xgboost_integration.py)
 </details>
 
@@ -161,7 +170,7 @@ import optuna
 def objective(trial):
     x1 = trial.suggest_float("x1", -100, 100)
     x2 = trial.suggest_float("x2", -100, 100)
-    return x1 ** 2 + 0.01 * x2 ** 2
+    return x1**2 + 0.01 * x2**2
 
 
 study = optuna.create_study(storage="sqlite:///db.sqlite3")  # Create a new study with database.
@@ -182,6 +191,50 @@ Hit Ctrl-C to quit.
 ```
 
 </details>
+
+
+## OptunaHub
+
+[OptunaHub](https://hub.optuna.org/) is a feature-sharing platform for Optuna.
+You can use the registered features and publish your packages.
+
+### Use registered features
+
+`optunahub` can be installed via pip:
+
+```shell
+$ pip install optunahub
+# Install AutoSampler dependencies (CPU only is sufficient for PyTorch)
+$ pip install cmaes scipy torch --extra-index-url https://download.pytorch.org/whl/cpu
+```
+
+You can load registered module with `optunahub.load_module`.
+
+```python
+import optuna
+import optunahub
+
+
+def objective(trial: optuna.Trial) -> float:
+    x = trial.suggest_float("x", -5, 5)
+    y = trial.suggest_float("y", -5, 5)
+    return x**2 + y**2
+
+
+module = optunahub.load_module(package="samplers/auto_sampler")
+# See https://hub.optuna.org/samplers/auto_sampler/ to know the ``AutoSampler`` API.
+study = optuna.create_study(sampler=module.AutoSampler())
+study.optimize(objective, n_trials=10)
+
+print(study.best_trial.value, study.best_trial.params)
+```
+
+For more details, please refer to [the optunahub documentation](https://optuna.github.io/optunahub/).
+
+### Publish your packages
+
+You can publish your package via [optunahub-registry](https://github.com/optuna/optunahub-registry).
+See the [Tutorials for Contributors](https://optuna.github.io/optunahub/tutorials_for_contributors.html) in OptunaHub.
 
 
 ## Communication
@@ -221,3 +274,10 @@ If you use Optuna in one of your research projects, please cite [our KDD paper](
 }
 ```
 </details>
+
+
+## License
+
+MIT License (see [LICENSE](./LICENSE)).
+
+Optuna uses the codes from SciPy and fdlibm projects (see [LICENSE_THIRD_PARTY](./LICENSE_THIRD_PARTY)).

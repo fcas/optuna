@@ -4,25 +4,18 @@ import io
 from typing import TYPE_CHECKING
 
 import boto3
+from moto import mock_aws
 import pytest
 
 from optuna.artifacts import Boto3ArtifactStore
 from optuna.artifacts.exceptions import ArtifactNotFound
 
 
-try:
-    # TODO(nabenabe0928): Replace it with `from moto import mock_aws` after dropping Python3.7.
-    from moto import mock_aws
-except ImportError:
-    from moto import mock_s3 as mock_aws  # type: ignore[attr-defined,no-redef]
-
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from typing import Annotated
 
     from mypy_boto3_s3 import S3Client
-    from typing_extensions import Annotated
-
-    # TODO(Shinichi) import Annotated from typing after python 3.8 support is dropped.
 
 
 @pytest.fixture()
@@ -85,7 +78,7 @@ def test_remove(init_mock_client: Annotated[tuple[str, S3Client], pytest.fixture
 
 
 def test_file_not_found_exception(
-    init_mock_client: Annotated[tuple[str, S3Client], pytest.fixture]
+    init_mock_client: Annotated[tuple[str, S3Client], pytest.fixture],
 ) -> None:
     bucket_name, _ = init_mock_client
     backend = Boto3ArtifactStore(bucket_name)

@@ -3,8 +3,6 @@ from __future__ import annotations
 import contextlib
 import io
 import os
-from typing import Dict
-from typing import Optional
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -16,14 +14,15 @@ from optuna.artifacts.exceptions import ArtifactNotFound
 
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from collections.abc import Iterator
 
 
-_MOCK_BUCKET_CONTENT: Dict[str, bytes] = dict()
+_MOCK_BUCKET_CONTENT: dict[str, bytes] = dict()
 
 
 class MockBucket:
-    def get_blob(self, blob_name: str) -> Optional["MockBlob"]:
+    def get_blob(self, blob_name: str) -> "MockBlob" | None:
         if blob_name in _MOCK_BUCKET_CONTENT:
             return MockBlob(blob_name)
         else:
@@ -33,7 +32,6 @@ class MockBucket:
         return MockBlob(blob_name)
 
     def delete_blob(self, blob_name: str) -> None:
-        global _MOCK_BUCKET_CONTENT
         del _MOCK_BUCKET_CONTENT[blob_name]
 
     def list_blobs(self) -> Iterator["MockBlob"]:
@@ -49,12 +47,11 @@ class MockBlob:
         return _MOCK_BUCKET_CONTENT[self.blob_name]
 
     def upload_from_string(self, data: bytes) -> None:
-        global _MOCK_BUCKET_CONTENT
         _MOCK_BUCKET_CONTENT[self.blob_name] = data
 
 
 @contextlib.contextmanager
-def init_mock_client() -> Iterator[None]:
+def init_mock_client() -> Generator[None, None, None]:
     # In case we fail to patch `google.cloud.storage.Client`, we deliberately set an invalid
     # credential path so that we do not accidentally access GCS.
     # Note that this is not a perfect measure; it can become ineffective in future when the

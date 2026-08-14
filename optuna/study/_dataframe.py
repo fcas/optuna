@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import collections
 from typing import Any
-from typing import DefaultDict
-from typing import Set
 
 import optuna
 from optuna._imports import try_import
@@ -36,7 +34,7 @@ def _create_records_and_aggregate_column(
     # column_agg is an aggregator of column names.
     # Keys of column agg are attributes of `FrozenTrial` such as 'trial_id' and 'params'.
     # Values are dataframe columns such as ('trial_id', '') and ('params', 'n_layers').
-    column_agg: DefaultDict[str, Set] = collections.defaultdict(set)
+    column_agg: collections.defaultdict[str, set] = collections.defaultdict(set)
     non_nested_attr = ""
 
     metric_names = study.metric_names
@@ -78,9 +76,18 @@ def _create_records_and_aggregate_column(
 
         records.append(record)
 
-    columns: list[tuple[str, str]] = sum(
-        (sorted(column_agg[k]) for k in attrs if k in column_agg), []
-    )
+    # Build column list preserving the order of `attrs` and, for multi-objective
+    # studies with metric names set, the order of `metric_names` instead of
+    # alphabetical sorting (GH #6785).
+    columns: list[tuple[str, str]] = []
+    for k in attrs:
+        if k not in column_agg:
+            continue
+        if k == "values" and metric_names is not None:
+            df_col = attrs_to_df_columns[k]
+            columns.extend((df_col, name) for name in metric_names)
+        else:
+            columns.extend(sorted(column_agg[k]))
 
     return records, columns
 

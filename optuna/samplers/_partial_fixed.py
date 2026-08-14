@@ -1,21 +1,20 @@
 from __future__ import annotations
 
 from typing import Any
-from typing import Dict
-from typing import Optional
-from typing import Sequence
 from typing import TYPE_CHECKING
-import warnings
 
 from optuna._experimental import experimental_class
-from optuna.distributions import BaseDistribution
+from optuna._warnings import optuna_warn
 from optuna.samplers import BaseSampler
-from optuna.trial import FrozenTrial
-from optuna.trial import TrialState
 
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from optuna.distributions import BaseDistribution
     from optuna.study import Study
+    from optuna.trial import FrozenTrial
+    from optuna.trial import TrialState
 
 
 @experimental_class("2.4.0")
@@ -57,7 +56,7 @@ class PartialFixedSampler(BaseSampler):
 
     """
 
-    def __init__(self, fixed_params: Dict[str, Any], base_sampler: BaseSampler) -> None:
+    def __init__(self, fixed_params: dict[str, Any], base_sampler: BaseSampler) -> None:
         self._fixed_params = fixed_params
         self._base_sampler = base_sampler
 
@@ -66,7 +65,7 @@ class PartialFixedSampler(BaseSampler):
 
     def infer_relative_search_space(
         self, study: Study, trial: FrozenTrial
-    ) -> Dict[str, BaseDistribution]:
+    ) -> dict[str, BaseDistribution]:
         search_space = self._base_sampler.infer_relative_search_space(study, trial)
 
         # Remove fixed params from relative search space to return fixed values.
@@ -80,8 +79,8 @@ class PartialFixedSampler(BaseSampler):
         self,
         study: Study,
         trial: FrozenTrial,
-        search_space: Dict[str, BaseDistribution],
-    ) -> Dict[str, Any]:
+        search_space: dict[str, BaseDistribution],
+    ) -> dict[str, Any]:
         # Fixed params are never sampled here.
         return self._base_sampler.sample_relative(study, trial, search_space)
 
@@ -106,7 +105,7 @@ class PartialFixedSampler(BaseSampler):
             contained = param_distribution._contains(param_value_in_internal_repr)
 
             if not contained:
-                warnings.warn(
+                optuna_warn(
                     f"Fixed parameter '{param_name}' with value {param_value} is out of range "
                     f"for distribution {param_distribution}."
                 )
@@ -120,6 +119,6 @@ class PartialFixedSampler(BaseSampler):
         study: Study,
         trial: FrozenTrial,
         state: TrialState,
-        values: Optional[Sequence[float]],
+        values: Sequence[float] | None,
     ) -> None:
         self._base_sampler.after_trial(study, trial, state, values)

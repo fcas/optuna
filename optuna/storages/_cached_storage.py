@@ -1,15 +1,11 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from collections.abc import Container
+from collections.abc import Sequence
 import copy
 import threading
 from typing import Any
-from typing import Callable
-from typing import Container
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Sequence
-from typing import Set
-from typing import Tuple
-from typing import Union
 
 import optuna
 from optuna import distributions
@@ -26,13 +22,15 @@ from optuna.trial import TrialState
 class _StudyInfo:
     def __init__(self) -> None:
         # Trial number to corresponding FrozenTrial.
-        self.trials: Dict[int, FrozenTrial] = {}
-        # A list of trials which do not require storage access to read latest attributes.
-        self.finished_trial_ids: Set[int] = set()
+        self.trials: dict[int, FrozenTrial] = {}
+        # A list of trials and the last trial number which require storage access to read latest
+        # attributes.
+        self.unfinished_trial_ids: set[int] = set()
+        self.last_finished_trial_id: int = -1
         # Cache distributions to avoid storage access on distribution consistency check.
-        self.param_distribution: Dict[str, distributions.BaseDistribution] = {}
-        self.directions: Optional[List[StudyDirection]] = None
-        self.name: Optional[str] = None
+        self.param_distribution: dict[str, distributions.BaseDistribution] = {}
+        self.directions: list[StudyDirection] | None = None
+        self.name: str | None = None
 
 
 class _CachedStorage(BaseStorage, BaseHeartbeat):
@@ -62,22 +60,22 @@ class _CachedStorage(BaseStorage, BaseHeartbeat):
 
     def __init__(self, backend: RDBStorage) -> None:
         self._backend = backend
-        self._studies: Dict[int, _StudyInfo] = {}
-        self._trial_id_to_study_id_and_number: Dict[int, Tuple[int, int]] = {}
-        self._study_id_and_number_to_trial_id: Dict[Tuple[int, int], int] = {}
+        self._studies: dict[int, _StudyInfo] = {}
+        self._trial_id_to_study_id_and_number: dict[int, tuple[int, int]] = {}
+        self._study_id_and_number_to_trial_id: dict[tuple[int, int], int] = {}
         self._lock = threading.Lock()
 
-    def __getstate__(self) -> Dict[Any, Any]:
+    def __getstate__(self) -> dict[Any, Any]:
         state = self.__dict__.copy()
         del state["_lock"]
         return state
 
-    def __setstate__(self, state: Dict[Any, Any]) -> None:
+    def __setstate__(self, state: dict[Any, Any]) -> None:
         self.__dict__.update(state)
         self._lock = threading.Lock()
 
     def create_new_study(
-        self, directions: Sequence[StudyDirection], study_name: Optional[str] = None
+        self, directions: Sequence[StudyDirection], study_name: str | None = None
     ) -> int:
         study_id = self._backend.create_new_study(directions=directions, study_name=study_name)
         with self._lock:
@@ -124,7 +122,7 @@ class _CachedStorage(BaseStorage, BaseHeartbeat):
             self._studies[study_id].name = name
         return name
 
-    def get_study_directions(self, study_id: int) -> List[StudyDirection]:
+    def get_study_directions(self, study_id: int) -> list[StudyDirection]:
         with self._lock:
             if study_id in self._studies:
                 directions = self._studies[study_id].directions
@@ -138,27 +136,22 @@ class _CachedStorage(BaseStorage, BaseHeartbeat):
             self._studies[study_id].directions = directions
         return directions
 
-    def get_study_user_attrs(self, study_id: int) -> Dict[str, Any]:
+    def get_study_user_attrs(self, study_id: int) -> dict[str, Any]:
         return self._backend.get_study_user_attrs(study_id)
 
-    def get_study_system_attrs(self, study_id: int) -> Dict[str, Any]:
+    def get_study_system_attrs(self, study_id: int) -> dict[str, Any]:
         return self._backend.get_study_system_attrs(study_id)
 
-    def get_all_studies(self) -> List[FrozenStudy]:
+    def get_all_studies(self) -> list[FrozenStudy]:
         return self._backend.get_all_studies()
 
-    def create_new_trial(self, study_id: int, template_trial: Optional[FrozenTrial] = None) -> int:
+    def create_new_trial(self, study_id: int, template_trial: FrozenTrial | None = None) -> int:
         frozen_trial = self._backend._create_new_trial(study_id, template_trial)
         trial_id = frozen_trial._trial_id
         with self._lock:
             if study_id not in self._studies:
                 self._studies[study_id] = _StudyInfo()
-            study = self._studies[study_id]
             self._add_trials_to_cache(study_id, [frozen_trial])
-            # Since finished trials will not be modified by any worker, we do not
-            # need storage access for them.
-            if frozen_trial.state.is_finished():
-                study.finished_trial_ids.add(frozen_trial._trial_id)
         return trial_id
 
     def set_trial_param(
@@ -168,7 +161,14 @@ class _CachedStorage(BaseStorage, BaseHeartbeat):
         param_value_internal: float,
         distribution: distributions.BaseDistribution,
     ) -> None:
-        self._backend.set_trial_param(trial_id, param_name, param_value_internal, distribution)
+        with self._lock:
+            study_id, _ = self._trial_id_to_study_id_and_number[trial_id]
+            cached_dist = self._studies[study_id].param_distribution.get(param_name)
+            self._backend._set_trial_param(
+                trial_id, param_name, param_value_internal, distribution, cached_dist
+            )
+            if cached_dist is None:
+                self._studies[study_id].param_distribution[param_name] = distribution
 
     def get_trial_id_from_study_id_trial_number(self, study_id: int, trial_number: int) -> int:
         key = (study_id, trial_number)
@@ -179,10 +179,17 @@ class _CachedStorage(BaseStorage, BaseHeartbeat):
         return self._backend.get_trial_id_from_study_id_trial_number(study_id, trial_number)
 
     def get_best_trial(self, study_id: int) -> FrozenTrial:
-        return self._backend.get_best_trial(study_id)
+        _directions = self.get_study_directions(study_id)
+        if len(_directions) > 1:
+            raise RuntimeError(
+                "Best trial can be obtained only for single-objective optimization."
+            )
+        direction = _directions[0]
+        trial_id = self._backend._get_best_trial_id(study_id, direction)
+        return self.get_trial(trial_id)
 
     def set_trial_state_values(
-        self, trial_id: int, state: TrialState, values: Optional[Sequence[float]] = None
+        self, trial_id: int, state: TrialState, values: Sequence[float] | None = None
     ) -> bool:
         return self._backend.set_trial_state_values(trial_id, state=state, values=values)
 
@@ -197,12 +204,15 @@ class _CachedStorage(BaseStorage, BaseHeartbeat):
     def set_trial_system_attr(self, trial_id: int, key: str, value: JSONSerializable) -> None:
         self._backend.set_trial_system_attr(trial_id, key=key, value=value)
 
-    def _get_cached_trial(self, trial_id: int) -> Optional[FrozenTrial]:
+    def _get_cached_trial(self, trial_id: int) -> FrozenTrial | None:
         if trial_id not in self._trial_id_to_study_id_and_number:
             return None
         study_id, number = self._trial_id_to_study_id_and_number[trial_id]
         study = self._studies[study_id]
-        return study.trials[number] if trial_id in study.finished_trial_ids else None
+        trial = study.trials[number]
+        if not trial.state.is_finished():
+            return None
+        return trial
 
     def get_trial(self, trial_id: int) -> FrozenTrial:
         with self._lock:
@@ -216,8 +226,8 @@ class _CachedStorage(BaseStorage, BaseHeartbeat):
         self,
         study_id: int,
         deepcopy: bool = True,
-        states: Optional[Container[TrialState]] = None,
-    ) -> List[FrozenTrial]:
+        states: Container[TrialState] | None = None,
+    ) -> list[FrozenTrial]:
         self._read_trials_from_remote_storage(study_id)
 
         with self._lock:
@@ -225,7 +235,7 @@ class _CachedStorage(BaseStorage, BaseHeartbeat):
             # We need to sort trials by their number because some samplers assume this behavior.
             # The following two lines are latency-sensitive.
 
-            trials: Union[Dict[int, FrozenTrial], List[FrozenTrial]]
+            trials: dict[int, FrozenTrial] | list[FrozenTrial]
 
             if states is not None:
                 trials = {number: t for number, t in study.trials.items() if t.state in states}
@@ -240,15 +250,27 @@ class _CachedStorage(BaseStorage, BaseHeartbeat):
                 self._studies[study_id] = _StudyInfo()
             study = self._studies[study_id]
             trials = self._backend._get_trials(
-                study_id, states=None, excluded_trial_ids=study.finished_trial_ids
+                study_id,
+                states=None,
+                included_trial_ids=study.unfinished_trial_ids,
+                trial_id_greater_than=study.last_finished_trial_id,
             )
-            if trials:
-                self._add_trials_to_cache(study_id, trials)
-                for trial in trials:
-                    if trial.state.is_finished():
-                        study.finished_trial_ids.add(trial._trial_id)
+            if not trials:
+                return
 
-    def _add_trials_to_cache(self, study_id: int, trials: List[FrozenTrial]) -> None:
+            self._add_trials_to_cache(study_id, trials)
+            for trial in trials:
+                if not trial.state.is_finished():
+                    study.unfinished_trial_ids.add(trial._trial_id)
+                    continue
+
+                # Updates to last_finished_trial_id should only be performed here because they must
+                # be executed only when all trials have been considered.
+                study.last_finished_trial_id = max(study.last_finished_trial_id, trial._trial_id)
+                if trial._trial_id in study.unfinished_trial_ids:
+                    study.unfinished_trial_ids.remove(trial._trial_id)
+
+    def _add_trials_to_cache(self, study_id: int, trials: list[FrozenTrial]) -> None:
         study = self._studies[study_id]
         for trial in trials:
             self._trial_id_to_study_id_and_number[trial._trial_id] = (
@@ -261,11 +283,13 @@ class _CachedStorage(BaseStorage, BaseHeartbeat):
     def record_heartbeat(self, trial_id: int) -> None:
         self._backend.record_heartbeat(trial_id)
 
-    def _get_stale_trial_ids(self, study_id: int) -> List[int]:
+    def _get_stale_trial_ids(self, study_id: int) -> list[int]:
         return self._backend._get_stale_trial_ids(study_id)
 
-    def get_heartbeat_interval(self) -> Optional[int]:
+    def get_heartbeat_interval(self) -> int | None:
         return self._backend.get_heartbeat_interval()
 
-    def get_failed_trial_callback(self) -> Optional[Callable[["optuna.Study", FrozenTrial], None]]:
-        return self._backend.get_failed_trial_callback()
+    def get_heartbeat_stale_trial_callback(
+        self,
+    ) -> Callable[["optuna.Study", FrozenTrial], None] | None:
+        return self._backend.get_heartbeat_stale_trial_callback()
